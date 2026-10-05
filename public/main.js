@@ -339,16 +339,20 @@ function renderMyArea(st, me) {
   const sbI     = nxtI(st, st.dealerIdx);
   const bbI     = nxtI(st, sbI);
   let badges = '';
-  if (st.dealerIdx===gIdx) badges += '<span style="color:var(--gold);font-size:.65rem">Ⓓ</span>';
-  if (gIdx===sbI) badges += '<span style="color:var(--txt3);font-size:.65rem">SB</span>';
-  if (gIdx===bbI) badges += '<span style="color:var(--txt3);font-size:.65rem">BB</span>';
+  if (st.dealerIdx===gIdx) badges += '<span class="role-badge role-d">D</span>';
+  if (gIdx===sbI) badges += '<span class="role-badge role-sb">SB</span>';
+  if (gIdx===bbI) badges += '<span class="role-badge role-bb">BB</span>';
 
   document.getElementById('my-name-row').innerHTML =
-    `<span style="${isTurn?'color:var(--gold-hi)':''}">${me.name}${isTurn?' ⚡':''}</span>
-     ${badges}
-     <span class="my-chips-val">$${fmt(me.chips)}</span>
-     ${me.bet>0?`<span class="my-bet-val">bet $${fmt(me.bet)}</span>`:''}
-     ${me.wins>0?`<span class="my-wins">🏆×${me.wins}</span>`:''}`;
+    `<div class="my-header-row">
+       <span class="my-player-name ${isTurn?'is-my-turn':''}">${me.name}${isTurn?' ⚡':''}</span>
+       ${badges}
+       ${me.wins>0?`<span class="my-wins-badge">🏆×${me.wins}</span>`:''}
+     </div>
+     <div class="my-chips-row">
+       <span class="my-chips-val">$${fmt(me.chips)}</span>
+       ${me.bet>0?`<span class="my-bet-pill">BET $${fmt(me.bet)}</span>`:''}
+     </div>`;
 
   const rebuyBtn = document.getElementById('btn-rebuy');
   if (rebuyBtn) {
@@ -588,7 +592,7 @@ function updateTimer(st) {
     const secsLeft  = Math.max(0, 30 - Math.floor(elapsed/1000));
     const pct       = (secsLeft/30)*100;
     if (fill) fill.style.width = pct+'%';
-    if (numEl) numEl.textContent = secsLeft;
+    if (numEl) numEl.textContent = secsLeft + 's';
     const warn = secsLeft<=10, danger = secsLeft<=5;
     if (fill)  { fill.classList.toggle('tw', warn&&!danger); fill.classList.toggle('td', danger); }
     if (numEl) { numEl.classList.toggle('tw', warn&&!danger); numEl.classList.toggle('td', danger); }
