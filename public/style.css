@@ -727,6 +727,9 @@ input:focus {
   transition: top 0.3s ease, left 0.3s ease;
   z-index: 10;
 }
+#my-seat {
+  display: none !important;
+}
 .seat-inner {
   display: flex;
   align-items: center;
@@ -1847,198 +1850,400 @@ input[type=range]::-webkit-slider-thumb {
 @media (max-width: 768px) {
   /* Topbar: Compact & crisp */
   .topbar {
-    height: calc(44px + env(safe-area-inset-top, 0px));
+    height: calc(42px + env(safe-area-inset-top, 0px));
     padding: env(safe-area-inset-top, 0px) 10px 0 10px;
-    gap: 8px;
+    gap: 6px;
   }
   .tb-room strong {
     letter-spacing: 1.5px;
-    font-size: 0.86rem;
+    font-size: 0.84rem;
   }
   .tb-info {
-    font-size: 0.72rem;
+    font-size: 0.70rem;
   }
   .pot-display {
-    font-size: 0.78rem;
+    font-size: 0.76rem;
   }
   .pot-display span {
-    font-size: 0.94rem;
+    font-size: 0.92rem;
   }
   .tb-btn {
-    padding: 0.3rem 0.6rem;
-    font-size: 0.72rem;
-    min-height: 30px;
+    padding: 0.25rem 0.55rem;
+    font-size: 0.70rem;
+    min-height: 28px;
   }
 
-  /* Table: Elegant oval tailored for portrait phone screens */
+  /* ═══ VERTICAL STADIUM FELT (PokerNow style) ═══ */
   .felt {
-    width: min(94vw, 420px);
-    aspect-ratio: 1.55 / 1;
-    max-height: 48vh;
-    top: 44%;
+    width: min(84vw, 360px);
+    height: min(65vh, 580px);
+    aspect-ratio: unset;
+    max-height: unset;
+    border-radius: 120px;
+    border: 8px solid var(--rim2);
+    top: 48%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 0 3px rgba(0,0,0,0.6),
+                0 0 0 6px #0d2415,
+                0 18px 60px rgba(0,0,0,0.8),
+                inset 0 0 60px rgba(0,0,0,0.3);
+  }
+  .felt::after {
+    border-radius: 114px;
+    border: 1.5px solid rgba(255,255,255,0.08);
+  }
+  .felt-inner {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
   }
 
-  /* Community Board cards on mobile */
+  /* Pot on felt (Pill style) */
+  .pot-on-felt {
+    font-size: 1.20rem;
+    font-weight: 800;
+    color: #f5c842;
+    background: rgba(14, 14, 14, 0.65);
+    padding: 3px 14px;
+    border-radius: 99px;
+    border: 1px solid rgba(245, 200, 66, 0.35);
+    text-shadow: 0 2px 6px rgba(0,0,0,0.9);
+  }
+
+  /* Community Board cards on vertical felt */
+  .board {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    justify-content: center;
+  }
   .board .card {
-    width: clamp(46px, 14.5vw, 62px);
-    height: clamp(66px, 20.5vw, 88px);
+    width: clamp(40px, 12vw, 48px);
+    height: clamp(58px, 17vw, 68px);
     border-radius: 5px;
   }
   .board .card .cr {
-    font-size: clamp(22px, 6.8vw, 30px);
-    top: 3px; left: 4px;
+    font-size: clamp(19px, 5.8vw, 24px);
+    top: 2px;
+    left: 3px;
   }
   .board .card .cs {
-    font-size: clamp(44px, 13.5vw, 60px);
+    font-size: clamp(38px, 11vw, 46px);
     bottom: 1px;
   }
   .card-ph {
-    width: clamp(46px, 14.5vw, 62px);
-    height: clamp(66px, 20.5vw, 88px);
+    width: clamp(40px, 12vw, 48px);
+    height: clamp(58px, 17vw, 68px);
     border-radius: 5px;
   }
 
-  /* Opponent Seats on mobile: Balanced Sweet Spot */
-  .seat-inner {
-    transform: none;
+  /* ═══ OPPONENT SEATS ON MOBILE (Vertical PokerNow Anatomy) ═══ */
+  .seat.seat-mobile {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    pointer-events: auto;
+    z-index: 10;
   }
-  .seat-card-wrap {
-    width: 62px;
-    height: 74px;
+  .seat.seat-mobile .seat-inner {
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
   }
-  .seat-cards .card:nth-child(1),
-  .seat-cards .card:nth-child(2) {
-    width: 44px;
-    height: 62px;
+  .seat.seat-mobile .seat-card-wrap {
+    width: 52px;
+    height: 56px;
+    position: relative;
+    flex-shrink: 0;
   }
-  .seat-cards .card .cr { font-size: 19px; }
-  .seat-cards .card .cs { font-size: 26px; }
+  .seat.seat-mobile .seat-cards {
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
+  .seat.seat-mobile .seat-cards .card:nth-child(1) {
+    width: 36px;
+    height: 50px;
+    top: 4px;
+    left: 0;
+    transform: rotate(-8deg);
+    z-index: 1;
+    border-radius: 4px;
+  }
+  .seat.seat-mobile .seat-cards .card:nth-child(2) {
+    width: 36px;
+    height: 50px;
+    top: 0;
+    left: 16px;
+    transform: rotate(6deg);
+    z-index: 2;
+    border-radius: 4px;
+  }
+  .seat.seat-mobile .seat-cards .card .cr {
+    font-size: 16px;
+    top: 2px;
+    left: 3px;
+  }
+  .seat.seat-mobile .seat-cards .card .cs {
+    font-size: 22px;
+    bottom: 1px;
+  }
+  .seat.seat-mobile .seat-chip-count {
+    display: none !important;
+  }
 
-  .seat-chip-count {
-    font-size: 0.76rem;
-    padding: 2px 6px;
+  /* Compact Info Box Below Cards */
+  .seat.seat-mobile .seat-info-right {
+    min-width: unset;
+    width: 74px;
+    border-radius: 6px;
+    padding: 3px 4px;
+    margin-left: 0;
+    text-align: center;
+    gap: 1px;
+    background: rgba(18, 18, 18, 0.94);
+    border: 1.5px solid rgba(255, 255, 255, 0.18);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.65);
+    overflow: hidden;
   }
-  .seat-info-right {
-    min-width: 120px;
-    padding: 5px 9px;
+  .seat.seat-mobile .seat-info-right.is-turn {
+    border-color: var(--gold);
+    box-shadow: 0 0 0 2px rgba(212, 168, 67, 0.4), 0 4px 14px rgba(0, 0, 0, 0.8);
   }
-  .seat-name {
-    font-size: 0.94rem;
-    max-width: 90px;
+  .seat.seat-mobile .seat-info-right.is-folded {
+    opacity: 0.35;
+    filter: grayscale(0.8);
   }
-  .seat-chips-val {
-    font-size: 1.02rem;
+  .seat.seat-mobile .seat-info-right.is-allin {
+    border-color: var(--red) !important;
   }
-  .seat-act {
-    font-size: 0.70rem;
-    padding: 1px 6px;
+  .seat.seat-mobile .seat-name-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
   }
-  .seat-bet {
+  .seat.seat-mobile .seat-name {
+    font-size: 0.74rem;
+    font-weight: 700;
+    color: #fff;
+    max-width: 56px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .seat.seat-mobile .seat-chips-val {
     font-size: 0.82rem;
-    padding: 2px 8px;
-    bottom: -19px;
+    font-weight: 800;
+    color: #f5c842;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .seat.seat-mobile .seat-act {
+    font-size: 0.62rem;
+    font-weight: 800;
+    padding: 1px 4px;
+    border-radius: 3px;
+    align-self: center;
+    margin-top: 1px;
+  }
+  .seat.seat-mobile .seat-timer-bar-wrap {
+    width: 100%;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 0 0 4px 4px;
+    margin-top: 2px;
+    overflow: hidden;
+  }
+  .seat.seat-mobile .dealer-d {
+    width: 14px;
+    height: 14px;
+    font-size: 0.52rem;
+    border-width: 1px;
+  }
+  .seat.seat-mobile .wins-badge {
+    font-size: 0.60rem;
   }
 
-  /* ═══ BOTTOM BAR: DEDICATED 2-ROW ERGONOMIC MOBILE HUD ═══ */
+  /* ═══ INWARD BET CHIPS ON MOBILE ═══ */
+  .seat-bet {
+    position: absolute;
+    background: linear-gradient(135deg, #ffd700, #b8860b);
+    color: #000;
+    border-radius: 99px;
+    padding: 2px 7px;
+    font-size: 0.74rem;
+    font-weight: 800;
+    border: 1.5px solid #000;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+    white-space: nowrap;
+    z-index: 15;
+    font-variant-numeric: tabular-nums;
+  }
+  .seat-bet.bet-right {
+    left: 104%;
+    top: 50%;
+    transform: translateY(-50%);
+    bottom: auto;
+    right: auto;
+  }
+  .seat-bet.bet-left {
+    right: 104%;
+    top: 50%;
+    transform: translateY(-50%);
+    bottom: auto;
+    left: auto;
+  }
+  .seat-bet.bet-down {
+    top: 104%;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: auto;
+    right: auto;
+  }
+  .seat-bet.bet-up {
+    bottom: 104%;
+    left: 50%;
+    transform: translateX(-50%);
+    top: auto;
+    right: auto;
+  }
+
+  /* ═══ HERO SEAT FOR MOBILE (#my-seat) ═══ */
+  #my-seat {
+    display: flex !important;
+    position: absolute;
+    top: 88%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 25;
+    flex-direction: column;
+    align-items: center;
+    pointer-events: auto;
+  }
+  .hero-seat-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    position: relative;
+  }
+  .hero-card-wrap {
+    width: 72px;
+    height: 66px;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .hero-cards {
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
+  .hero-cards .card:nth-child(1) {
+    width: 44px;
+    height: 60px;
+    top: 4px;
+    left: 0;
+    transform: rotate(-7deg);
+    z-index: 1;
+    border-radius: 5px;
+    box-shadow: 0 3px 8px rgba(0,0,0,0.6);
+  }
+  .hero-cards .card:nth-child(2) {
+    width: 44px;
+    height: 60px;
+    top: 0;
+    left: 24px;
+    transform: rotate(6deg);
+    z-index: 2;
+    border-radius: 5px;
+    box-shadow: 0 3px 8px rgba(0,0,0,0.6);
+  }
+  .hero-cards .card .cr {
+    font-size: 21px;
+    top: 2px;
+    left: 3px;
+  }
+  .hero-cards .card .cs {
+    font-size: 38px;
+    bottom: 1px;
+  }
+  .hero-info {
+    min-width: unset;
+    width: 84px;
+    border-radius: 7px;
+    padding: 4px 6px;
+    margin-left: 0;
+    text-align: center;
+    gap: 1px;
+    background: rgba(18, 18, 18, 0.96);
+    border: 1.5px solid rgba(255, 255, 255, 0.22);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.8);
+  }
+  .hero-info .seat-name {
+    font-size: 0.78rem;
+    max-width: 68px;
+    font-weight: 800;
+    color: #fff;
+  }
+  .hero-info .seat-chips-val {
+    font-size: 0.90rem;
+    font-weight: 800;
+    color: #f5c842;
+  }
+  .hero-hs-pill {
+    position: absolute;
+    top: -16px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.65rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    white-space: nowrap;
+    padding: 1px 7px;
+    border-radius: 99px;
+    z-index: 30;
+    border: 1px solid currentColor;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+  }
+  .hero-rebuy-btn {
+    margin-top: 2px;
+    background: linear-gradient(135deg, #d32f2f, #b71c1c);
+    color: #fff;
+    border: 1px solid #ff5252;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 0.68rem;
+    font-weight: 800;
+    cursor: pointer;
+  }
+
+  /* ═══ BOTTOM BAR (Single-Row Clean Ergonomic HUD) ═══ */
   .bottom-bar {
     display: flex;
     flex-direction: column;
     width: 100%;
-    padding: 7px 12px calc(8px + env(safe-area-inset-bottom, 0px)) 12px;
-    background: linear-gradient(180deg, #1c1c1c, #121212);
-    border-top: 2px solid #2d2d2d;
-    gap: 5px;
-    box-shadow: 0 -8px 26px rgba(0,0,0,0.7);
+    padding: 6px 12px calc(8px + env(safe-area-inset-bottom, 0px)) 12px;
+    background: #141414;
+    border-top: 1.5px solid #282828;
+    gap: 4px;
+    box-shadow: 0 -8px 24px rgba(0,0,0,0.7);
     box-sizing: border-box;
+    z-index: 200;
   }
-
-  /* Row 1: Player cards (left) + Player info (right) */
   .my-zone {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    width: 100%;
-    padding: 0;
-    gap: 10px;
+    display: none !important;
   }
-  .my-cards {
-    display: flex;
-    gap: 5px;
-    flex-shrink: 0;
-  }
-  .my-cards .card {
-    width: 62px;
-    height: 88px;
-    border-radius: 5px;
-  }
-  .my-cards .card .cr { font-size: 30px; top: 4px; left: 5px; }
-  .my-cards .card .cs { font-size: 56px; bottom: 2px; }
-
-  .my-meta {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-  }
-  .my-header-row {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    flex-wrap: wrap;
-  }
-  .my-player-name {
-    font-size: 1.02rem;
-    font-weight: 700;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 115px;
-  }
-  .my-chips-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-  }
-  .my-chips-val {
-    font-size: 1.16rem;
-    font-weight: 800;
-  }
-  .my-bet-pill {
-    font-size: 0.76rem;
-    padding: 1px 5px;
-  }
-  .my-hs .hs-badge {
-    font-size: 0.72rem;
-    padding: 1px 7px;
-  }
-  .rebuy-btn {
-    font-size: 0.72rem;
-    padding: 3px 7px;
-  }
-
-  /* Full-width Timer Bar Stripe */
   .timer-wrap {
-    position: static;
-    width: 100%;
-    height: auto;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: 1px 0;
+    display: none !important;
   }
-  .timer-bar {
-    flex: 1;
-    height: 5px;
-  }
-  .timer-num {
-    font-size: 0.82rem;
-    font-weight: 800;
-    min-width: 28px;
-  }
-
-  /* Row 2: Action buttons & Turn Status */
   .act-zone {
     width: 100%;
     align-items: stretch;
@@ -2049,30 +2254,38 @@ input[type=range]::-webkit-slider-thumb {
     justify-content: space-between;
     align-items: center;
     width: 100%;
+    min-height: 16px;
     margin-bottom: 2px;
   }
   .act-status-inline {
-    font-size: 0.78rem;
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: var(--txt2);
   }
   .your-turn-lbl {
-    font-size: 0.74rem;
+    font-size: 0.72rem;
     font-weight: 800;
   }
   .act-row {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 6px;
+    display: flex;
+    gap: 8px;
     width: 100%;
   }
   .btn-a {
+    flex: 1;
     min-width: unset !important;
-    width: 100%;
     height: 46px;
     font-size: 0.88rem;
     font-weight: 800;
-    border-radius: 7px;
-    padding: 0 8px;
+    border-radius: 8px;
+    padding: 0 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
+  .btn-a.fold { order: 1; }
+  .btn-a.check, .btn-a.call { order: 2; }
+  .btn-a.raise { order: 3; }
 
   /* Centered Modal Raise Panel on Mobile */
   .raise-panel {
@@ -2120,23 +2333,49 @@ input[type=range]::-webkit-slider-thumb {
 /* Small Handset Devices (<= 400px) */
 @media (max-width: 400px) {
   .felt {
-    width: 96vw;
-    aspect-ratio: 1.5 / 1;
+    width: 90vw;
+    height: min(63vh, 520px);
+    border-radius: 100px;
   }
-  .my-cards .card {
-    width: 56px;
-    height: 80px;
+  .board .card, .card-ph {
+    width: 38px;
+    height: 54px;
   }
-  .my-cards .card .cr { font-size: 26px; }
-  .my-cards .card .cs { font-size: 50px; }
-  .my-player-name {
-    font-size: 0.96rem;
+  .board .card .cr { font-size: 17px; }
+  .board .card .cs { font-size: 34px; }
+  .seat.seat-mobile .seat-card-wrap {
+    width: 46px;
+    height: 50px;
   }
-  .my-chips-val {
-    font-size: 1.08rem;
+  .seat.seat-mobile .seat-cards .card:nth-child(1),
+  .seat.seat-mobile .seat-cards .card:nth-child(2) {
+    width: 32px;
+    height: 44px;
+  }
+  .seat.seat-mobile .seat-info-right {
+    width: 68px;
+  }
+  .seat.seat-mobile .seat-name {
+    font-size: 0.70rem;
+    max-width: 50px;
+  }
+  .seat.seat-mobile .seat-chips-val {
+    font-size: 0.78rem;
+  }
+  .hero-card-wrap {
+    width: 64px;
+    height: 58px;
+  }
+  .hero-cards .card:nth-child(1),
+  .hero-cards .card:nth-child(2) {
+    width: 38px;
+    height: 52px;
+  }
+  .hero-info {
+    width: 76px;
   }
   .btn-a {
     height: 44px;
-    font-size: 0.84rem;
+    font-size: 0.82rem;
   }
 }

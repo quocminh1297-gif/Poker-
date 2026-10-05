@@ -10,7 +10,21 @@ let timerInterval = null, timerTurnStartMs = null, seatTimerInterval = null;
 const SUIT_SYM  = { s:'♠', h:'♥', d:'♦', c:'♣' };
 const SUIT_CLS  = { s:'c-s', h:'c-h', d:'c-d', c:'c-c' };
 
-/* Opponent seat positions (% of arena) by opponent count - safe inward margins */
+const isMobile = () => window.matchMedia('(max-width: 768px)').matches;
+
+/* Opponent seat positions on mobile vertical table (<768px, PokerNow style) */
+const MOBILE_OPP_POS = {
+  1:[{t:'9%',  l:'50%', bet:'bet-down'}],
+  2:[{t:'22%', l:'18%', bet:'bet-right'},{t:'22%', l:'82%', bet:'bet-left'}],
+  3:[{t:'44%', l:'14%', bet:'bet-right'},{t:'9%',  l:'50%', bet:'bet-down'},{t:'44%', l:'86%', bet:'bet-left'}],
+  4:[{t:'56%', l:'14%', bet:'bet-right'},{t:'22%', l:'18%', bet:'bet-right'},{t:'22%', l:'82%', bet:'bet-left'},{t:'56%', l:'86%', bet:'bet-left'}],
+  5:[{t:'64%', l:'14%', bet:'bet-right'},{t:'30%', l:'15%', bet:'bet-right'},{t:'9%',  l:'50%', bet:'bet-down'},{t:'30%', l:'85%', bet:'bet-left'},{t:'64%', l:'86%', bet:'bet-left'}],
+  6:[{t:'68%', l:'14%', bet:'bet-right'},{t:'44%', l:'14%', bet:'bet-right'},{t:'18%', l:'22%', bet:'bet-right'},{t:'18%', l:'78%', bet:'bet-left'},{t:'44%', l:'86%', bet:'bet-left'},{t:'68%', l:'86%', bet:'bet-left'}],
+  7:[{t:'70%', l:'14%', bet:'bet-right'},{t:'48%', l:'14%', bet:'bet-right'},{t:'25%', l:'15%', bet:'bet-right'},{t:'9%',  l:'50%', bet:'bet-down'},{t:'25%', l:'85%', bet:'bet-left'},{t:'48%', l:'86%', bet:'bet-left'},{t:'70%', l:'86%', bet:'bet-left'}],
+  8:[{t:'73%', l:'14%', bet:'bet-right'},{t:'53%', l:'14%', bet:'bet-right'},{t:'33%', l:'14%', bet:'bet-right'},{t:'14%', l:'24%', bet:'bet-right'},{t:'14%', l:'76%', bet:'bet-left'},{t:'33%', l:'86%', bet:'bet-left'},{t:'53%', l:'86%', bet:'bet-left'},{t:'73%', l:'86%', bet:'bet-left'}],
+};
+
+/* Opponent seat positions (% of arena) on desktop horizontal table */
 const OPP_POS = {
   1:[{t:'14%', l:'50%'}],
   2:[{t:'14%', l:'30%'},{t:'14%', l:'70%'}],
@@ -21,6 +35,10 @@ const OPP_POS = {
   7:[{t:'52%', l:'11%'},{t:'28%', l:'13%'},{t:'14%', l:'25%'},{t:'10%', l:'42%'},{t:'10%', l:'62%'},{t:'14%', l:'79%'},{t:'28%', l:'87%'}],
   8:[{t:'56%', l:'11%'},{t:'36%', l:'11%'},{t:'18%', l:'17%'},{t:'10%', l:'34%'},{t:'10%', l:'52%'},{t:'10%', l:'70%'},{t:'18%', l:'83%'},{t:'36%', l:'89%'}],
 };
+
+window.addEventListener('resize', () => {
+  if (S && S.status === 'playing') renderGame(S);
+});
 
 socket.on('connect', () => { myId = socket.id; });
 socket.on('state', st => {
@@ -224,32 +242,34 @@ function mkMiniCard(str) {
   return el;
 }
 
-/* ─── OPPONENT SEATS (PokerNow: cards left | info right) ─── */
+/* ─── OPPONENT SEATS (PokerNow: cards left | info right on desktop; vertical on mobile) ─── */
 function renderSeats(st, opps) {
   const container = document.getElementById('seats');
   container.innerHTML = '';
-  const positions = OPP_POS[opps.length] || OPP_POS[Math.min(opps.length,8)] || [];
+  const mobile = isMobile();
+  const posSource = mobile ? MOBILE_OPP_POS : OPP_POS;
+  const positions = posSource[opps.length] || posSource[Math.min(opps.length, 8)] || [];
 
-  opps.forEach((p,i) => {
-    const gIdx    = st.players.findIndex(pl => pl.sid===p.sid);
-    const isTurn  = st.curIdx===gIdx && !p.folded && !p.allIn;
-    const isDealer= st.dealerIdx===gIdx;
-    const pos     = positions[i] || positions[positions.length-1];
+  opps.forEach((p, i) => {
+    const gIdx     = st.players.findIndex(pl => pl.sid === p.sid);
+    const isTurn   = st.curIdx === gIdx && !p.folded && !p.allIn;
+    const isDealer = st.dealerIdx === gIdx;
+    const pos      = positions[i] || positions[positions.length - 1];
 
     const seat = document.createElement('div');
-    seat.className = 'seat';
+    seat.className = 'seat' + (mobile ? ' seat-mobile' : '');
     seat.style.top  = pos.t;
     seat.style.left = pos.l;
 
     /* Cards HTML */
     let cardsHtml = '<div class="seat-cards">';
-    if (p.hole && p.hole.length>0 && !p.folded) {
+    if (p.hole && p.hole.length > 0 && !p.folded) {
       p.hole.forEach(c => {
-        if (!c || c==='??') {
+        if (!c || c === '??') {
           cardsHtml += '<div class="card card-back"><div class="back-inner"></div></div>';
         } else {
-          const rk=c.slice(0,-1), su=c.slice(-1);
-          const dr=rk==='T'?'10':rk, sym=SUIT_SYM[su]||su, cls=SUIT_CLS[su]||'';
+          const rk = c.slice(0, -1), su = c.slice(-1);
+          const dr = rk === 'T' ? '10' : rk, sym = SUIT_SYM[su] || su, cls = SUIT_CLS[su] || '';
           cardsHtml += `<div class="card ${cls}"><span class="cr">${dr}</span><span class="cs">${sym}</span></div>`;
         }
       });
@@ -260,10 +280,8 @@ function renderSeats(st, opps) {
     }
     cardsHtml += '</div>';
 
-    /* Chip count badge (green) */
-    const chipBadge = `<div class="seat-chip-count">${fmt(p.chips)}</div>`;
-
-
+    /* Chip count badge (green, desktop only) */
+    const chipBadge = mobile ? '' : `<div class="seat-chip-count">${fmt(p.chips)}</div>`;
 
     /* Info-right content */
     let infoRightCls = 'seat-info-right';
@@ -273,7 +291,7 @@ function renderSeats(st, opps) {
 
     /* Dealer + wins row */
     const dealerHtml = isDealer ? '<div class="dealer-d">D</div>' : '';
-    const winsHtml   = p.wins>0 ? `<span class="wins-badge">🏆×${p.wins}</span>` : '';
+    const winsHtml   = p.wins > 0 ? `<span class="wins-badge">🏆×${p.wins}</span>` : '';
 
     /* Last action badge */
     let actHtml = '';
@@ -281,13 +299,15 @@ function renderSeats(st, opps) {
       actHtml = '<div class="seat-act sa-allin">ALL IN</div>';
     } else if (p.lastAct) {
       const key = p.lastAct.toLowerCase().split(' ')[0];
-      const acls = {fold:'sa-fold',check:'sa-check',call:'sa-call',raise:'sa-raise',all:'sa-allin',bet:'sa-bet'}[key]||'sa-raise';
+      const acls = {fold:'sa-fold',check:'sa-check',call:'sa-call',raise:'sa-raise',all:'sa-allin',bet:'sa-bet'}[key] || 'sa-raise';
       actHtml = `<div class="seat-act ${acls}">${p.lastAct}</div>`;
     }
 
     /* Timer bar — at bottom of seat-info-right */
     const timerBar = isTurn && st.turnStartMs
       ? `<div class="seat-timer-bar-wrap"><div class="seat-timer-bar-fill" id="seat-timer-${gIdx}"></div></div>` : '';
+
+    const betCls = (mobile && pos.bet) ? ` ${pos.bet}` : '';
 
     seat.innerHTML = `
       <div class="seat-inner" style="position:relative">
@@ -306,57 +326,135 @@ function renderSeats(st, opps) {
           ${timerBar}
         </div>
       </div>
-      ${p.bet>0 ? `<div class="seat-bet">$${fmt(p.bet)}</div>` : ''}
+      ${p.bet > 0 ? `<div class="seat-bet${betCls}">$${fmt(p.bet)}</div>` : ''}
     `;
     container.appendChild(seat);
   });
 }
 
-/* ─── MY AREA ─── */
+/* ─── MY AREA (Desktop bottom bar & Mobile hero seat) ─── */
 function renderMyArea(st, me) {
   if (!me) return;
   const newCards = me.hole.join(',');
-  const hcEl    = document.getElementById('my-cards');
-  if (hcEl.dataset.cards !== newCards) {
+
+  /* 1. Desktop #my-cards in bottom-bar */
+  const hcEl = document.getElementById('my-cards');
+  if (hcEl && hcEl.dataset.cards !== newCards) {
     hcEl.innerHTML = '';
     hcEl.dataset.cards = newCards;
-    me.hole.forEach((c,i) => {
-      const card = mkCard(c==='??' ? null : c, 'anim-deal', i*0.08, false);
+    me.hole.forEach((c, i) => {
+      const card = mkCard(c === '??' ? null : c, 'anim-deal', i * 0.08, false);
       hcEl.appendChild(card);
     });
   }
 
   /* Hand strength */
   const hsEl = document.getElementById('my-hs');
-  if (st.hs && !me.folded && st.phase!=='showdown') {
-    const cls = hsClass(st.hs), icon = hsIcon(st.hs);
-    hsEl.innerHTML = `<div class="hs-badge ${cls}">${icon} ${st.hs}</div>`;
-  } else { hsEl.innerHTML=''; }
+  if (hsEl) {
+    if (st.hs && !me.folded && st.phase !== 'showdown') {
+      const cls = hsClass(st.hs), icon = hsIcon(st.hs);
+      hsEl.innerHTML = `<div class="hs-badge ${cls}">${icon} ${st.hs}</div>`;
+    } else { hsEl.innerHTML = ''; }
+  }
 
-  /* Name / chips row */
-  const gIdx    = st.players.findIndex(p=>p.isMe);
-  const isTurn  = st.curIdx===gIdx;
+  /* Name / chips row for Desktop */
+  const gIdx    = st.players.findIndex(p => p.isMe);
+  const isTurn  = st.curIdx === gIdx;
   const sbI     = nxtI(st, st.dealerIdx);
   const bbI     = nxtI(st, sbI);
   let badges = '';
-  if (st.dealerIdx===gIdx) badges += '<span class="role-badge role-d">D</span>';
-  if (gIdx===sbI) badges += '<span class="role-badge role-sb">SB</span>';
-  if (gIdx===bbI) badges += '<span class="role-badge role-bb">BB</span>';
+  if (st.dealerIdx === gIdx) badges += '<span class="role-badge role-d">D</span>';
+  if (gIdx === sbI) badges += '<span class="role-badge role-sb">SB</span>';
+  if (gIdx === bbI) badges += '<span class="role-badge role-bb">BB</span>';
 
-  document.getElementById('my-name-row').innerHTML =
-    `<div class="my-header-row">
-       <span class="my-player-name ${isTurn?'is-my-turn':''}">${me.name}${isTurn?' ⚡':''}</span>
-       ${badges}
-       ${me.wins>0?`<span class="my-wins-badge">🏆×${me.wins}</span>`:''}
-     </div>
-     <div class="my-chips-row">
-       <span class="my-chips-val">$${fmt(me.chips)}</span>
-       ${me.bet>0?`<span class="my-bet-pill">BET $${fmt(me.bet)}</span>`:''}
-     </div>`;
+  const nrEl = document.getElementById('my-name-row');
+  if (nrEl) {
+    nrEl.innerHTML =
+      `<div class="my-header-row">
+         <span class="my-player-name ${isTurn ? 'is-my-turn' : ''}">${me.name}${isTurn ? ' ⚡' : ''}</span>
+         ${badges}
+         ${me.wins > 0 ? `<span class="my-wins-badge">🏆×${me.wins}</span>` : ''}
+       </div>
+       <div class="my-chips-row">
+         <span class="my-chips-val">$${fmt(me.chips)}</span>
+         ${me.bet > 0 ? `<span class="my-bet-pill">BET $${fmt(me.bet)}</span>` : ''}
+       </div>`;
+  }
 
   const rebuyBtn = document.getElementById('btn-rebuy');
   if (rebuyBtn) {
     rebuyBtn.style.display = (me && me.chips === 0) ? 'inline-flex' : 'none';
+  }
+
+  /* 2. Mobile #my-seat inside #arena (PokerNow style bottom table seat) */
+  const mySeatEl = document.getElementById('my-seat');
+  if (mySeatEl) {
+    let heroCardsHtml = '<div class="seat-cards hero-cards">';
+    if (me.hole && me.hole.length > 0 && !me.folded) {
+      me.hole.forEach(c => {
+        if (!c || c === '??') {
+          heroCardsHtml += '<div class="card card-back"><div class="back-inner"></div></div>';
+        } else {
+          const rk = c.slice(0, -1), su = c.slice(-1);
+          const dr = rk === 'T' ? '10' : rk, sym = SUIT_SYM[su] || su, cls = SUIT_CLS[su] || '';
+          heroCardsHtml += `<div class="card ${cls}"><span class="cr">${dr}</span><span class="cs">${sym}</span></div>`;
+        }
+      });
+    } else {
+      heroCardsHtml += '<div class="card card-back"><div class="back-inner"></div></div>';
+      heroCardsHtml += '<div class="card card-back"><div class="back-inner"></div></div>';
+    }
+    heroCardsHtml += '</div>';
+
+    let hsHtml = '';
+    if (st.hs && !me.folded && st.phase !== 'showdown') {
+      const cls = hsClass(st.hs), icon = hsIcon(st.hs);
+      hsHtml = `<div class="hero-hs-pill ${cls}">${icon} ${st.hs}</div>`;
+    }
+
+    let heroInfoCls = 'seat-info-right hero-info';
+    if (isTurn)    heroInfoCls += ' is-turn';
+    if (me.folded) heroInfoCls += ' is-folded';
+    if (me.allIn)  heroInfoCls += ' is-allin';
+
+    const dealerHtml = (st.dealerIdx === gIdx) ? '<div class="dealer-d">D</div>' : '';
+    const winsHtml   = me.wins > 0 ? `<span class="wins-badge">🏆×${me.wins}</span>` : '';
+
+    let actHtml = '';
+    if (me.allIn && !me.folded) {
+      actHtml = '<div class="seat-act sa-allin">ALL IN</div>';
+    } else if (me.lastAct) {
+      const key = me.lastAct.toLowerCase().split(' ')[0];
+      const acls = {fold:'sa-fold',check:'sa-check',call:'sa-call',raise:'sa-raise',all:'sa-allin',bet:'sa-bet'}[key] || 'sa-raise';
+      actHtml = `<div class="seat-act ${acls}">${me.lastAct}</div>`;
+    }
+
+    const timerBar = isTurn && st.turnStartMs
+      ? `<div class="seat-timer-bar-wrap"><div class="seat-timer-bar-fill" id="seat-timer-${gIdx}"></div></div>` : '';
+
+    const betHtml = me.bet > 0 ? `<div class="seat-bet bet-up">$${fmt(me.bet)}</div>` : '';
+    const rebuyHtml = (me.chips === 0) ? `<button class="hero-rebuy-btn" onclick="triggerRebuy()">🔄 Rebuy</button>` : '';
+
+    mySeatEl.innerHTML = `
+      <div class="seat-inner hero-seat-inner" style="position:relative">
+        ${hsHtml}
+        <div class="seat-card-wrap hero-card-wrap">
+          ${heroCardsHtml}
+        </div>
+        <div class="${heroInfoCls}">
+          <div class="seat-name-row">
+            ${dealerHtml}
+            <div class="seat-name">${me.folded ? '<s style="opacity:.5">' + me.name + '</s>' : me.name}</div>
+            ${winsHtml}
+          </div>
+          <div class="seat-chips-val">$${fmt(me.chips)}</div>
+          ${actHtml}
+          ${timerBar}
+          ${rebuyHtml}
+        </div>
+      </div>
+      ${betHtml}
+    `;
   }
 }
 
