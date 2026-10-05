@@ -36,12 +36,18 @@ function mkDeck() {
 
 /* ── CONFIG SANITIZER ─────────────────────────── */
 function sanitizeCfg(o = {}) {
-  const sb    = Math.max(1, Math.floor(Number(o.sb) || 2000));
-  const bb    = Math.max(sb + 1, Math.floor(Number(o.bb) || 4000));
-  const chips = Math.max(bb * 2, Math.floor(Number(o.chips) || 100000));
-  const ante  = Math.max(0, Math.floor(Number(o.ante) || 0));
+  const sb    = Math.min(100000000, Math.max(1, Math.floor(Number(o.sb) || 2000)));
+  const bb    = Math.min(200000000, Math.max(sb + 1, Math.floor(Number(o.bb) || 4000)));
+  const chips = Math.min(10000000000, Math.max(bb * 2, Math.floor(Number(o.chips) || 100000)));
+  const ante  = Math.min(50000000, Math.max(0, Math.floor(Number(o.ante) || 0)));
   const maxP  = Math.min(9, Math.max(2, Math.floor(Number(o.maxP) || 9)));
   return { sb, bb, chips, ante, maxP };
+}
+
+/* ── NAME SANITIZER (Anti-XSS & length enforcement) ── */
+function sanitizeName(raw) {
+  if (typeof raw !== 'string') return '';
+  return raw.replace(/[^\p{L}\p{N}_\- ]/gu, '').trim().slice(0, 16);
 }
 
 /* ── HAND STRENGTH (pre-board) ─────────────────── */
@@ -76,7 +82,7 @@ function createRoom(hostId, o = {}) {
   return id;
 }
 
-function addOrReconnectPlayer(rid, sid, name, token) {
+function addOrReconnectPlayer(rid, sid, name, token, isMobile = false) {
   const r = rooms[rid];
   if (!r) return { err: 'Room not found' };
 
@@ -90,9 +96,25 @@ function addOrReconnectPlayer(rid, sid, name, token) {
   }
 
   if (existing) {
+    if (existing.disconnectTimer) {
+      clearTimeout(existing.disconnectTimer);
+      existing.disconnectTimer = null;
+    }
+    if (r.roomDestroyTimer) {
+      clearTimeout(r.roomDestroyTimer);
+      r.roomDestroyTimer = null;
+    }
+    const oldSid = existing.sid;
+    if (oldSid && oldSid !== sid) {
+      delete sock2room[oldSid];
+    }
     existing.sid = sid;
     existing.connected = true;
+    if (isMobile !== undefined) existing.isMobile = !!isMobile;
     sock2room[sid] = rid;
+    if (r.hostId === oldSid || !r.players.some(p => p.sid === r.hostId && p.connected)) {
+      r.hostId = sid;
+    }
     return { err: null, player: existing, reconnected: true };
   }
 
@@ -113,8 +135,9 @@ function addOrReconnectPlayer(rid, sid, name, token) {
     folded: false, allIn: false,
     active: !isPlaying,
     connected: true,
+    isMobile: !!isMobile,
     waitingNextHand: isPlaying,
-    acted: false, wins: 0, lastAct: null,
+    acted: false, canRaise: true, wins: 0, lastAct: null,
   };
 
   r.players.push(player);
@@ -145,9 +168,26 @@ function filterState(room, sid) {
       active: p.active && p.connected,
       connected: p.connected,
       waitingNextHand: p.waitingNextHand || false,
+      canRaise: p.canRaise ?? true,
       hole, isMe, wins: p.wins, lastAct: p.lastAct,
     };
   });
+
+  // Anti-cheat: Mask winner's hole cards in result if showdownHands is false (e.g. all opponents folded)
+  let safeResult = null;
+  if (room.result) {
+    safeResult = {
+      ...room.result,
+      winners: (room.result.winners || []).map(w => {
+        const isWinnerMe = room.players.some(p => p.sid === sid && p.name === w.name);
+        return {
+          ...w,
+          hole: (room.showdownHands || isWinnerMe) ? w.hole : null,
+        };
+      }),
+      allHands: room.showdownHands ? room.result.allHands : null,
+    };
+  }
 
   return {
     id: room.id, hostId: room.hostId, status: room.status,
@@ -155,11 +195,25 @@ function filterState(room, sid) {
     board: room.board, pot: room.pot,
     players, curIdx: room.curIdx, dealerIdx: room.dealerIdx,
     roundBet: room.roundBet, lastRaise: room.lastRaise,
-    handNum: room.handNum, msgs: room.msgs.slice(-100),
-    hs, result: room.result,
+    handNum: room.handNum, msgs: room.msgs.slice(-40),
+    hs, result: safeResult,
     turnStartMs: (room.showAllInHole || room.phase === 'showdown') ? null : (room.turnStartMs || null),
     paused: room.paused || false,
   };
+}
+
+const SUIT_UNICODE = { s:'♠', h:'♥', d:'♦', c:'♣' };
+function fmtCard(c) {
+  if (!c || c === '??') return '??';
+  const rk = c.slice(0, -1);
+  const su = c.slice(-1);
+  const dispR = rk === 'T' ? '10' : rk;
+  const sym = SUIT_UNICODE[su] || su;
+  return `${dispR}${sym}`;
+}
+function fmtCards(arr) {
+  if (!arr || !arr.length) return '';
+  return arr.map(fmtCard).join(' ');
 }
 
 function broadcast(r) {
@@ -173,7 +227,7 @@ function broadcast(r) {
 
 function msg(r, t) {
   r.msgs.push({ t, ts: Date.now() });
-  if (r.msgs.length > 100) r.msgs.shift();
+  if (r.msgs.length > 5000) r.msgs.shift();
 }
 
 /* ── TURN TIMER ─────────────────────────────────── */
@@ -291,18 +345,26 @@ function advancePlayer(r) {
 /* ── UNCALLED BET REFUND ────────────────────────── */
 function refundUncalledBet(r) {
   const inHand = inHandP(r);
-  if (inHand.length <= 1) return;
+  if (inHand.length === 0) return;
 
-  const sorted = [...inHand].sort((a, b) => b.totalBet - a.totalBet);
-  const highest = sorted[0];
-  const secondHighest = sorted[1];
+  const sortedInHand = [...inHand].sort((a, b) => b.totalBet - a.totalBet);
+  const highest = sortedInHand[0];
+  if (!highest || highest.totalBet <= 0) return;
 
-  const uncalled = highest.totalBet - secondHighest.totalBet;
+  // Maximum bet contributed by ANY other player (including those who folded)
+  let maxOtherBet = 0;
+  for (const p of r.players) {
+    if (p !== highest && p.totalBet > maxOtherBet) {
+      maxOtherBet = p.totalBet;
+    }
+  }
+
+  const uncalled = highest.totalBet - maxOtherBet;
   if (uncalled > 0) {
     highest.chips += uncalled;
     highest.totalBet -= uncalled;
     highest.bet = Math.max(0, highest.bet - uncalled);
-    r.pot -= uncalled;
+    r.pot = Math.max(0, r.pot - uncalled);
     msg(r, `↩️ $${uncalled} uncalled bet returned to ${highest.name}`);
   }
 }
@@ -310,7 +372,7 @@ function refundUncalledBet(r) {
 /* ── STREET ADVANCE ─────────────────────────────── */
 function advanceStreet(r) {
   refundUncalledBet(r);
-  for (const p of r.players) { p.bet = 0; p.acted = false; p.lastAct = null; }
+  for (const p of r.players) { p.bet = 0; p.acted = false; p.canRaise = true; p.lastAct = null; }
   r.roundBet = 0; r.lastRaise = r.cfg.bb;
 
   // In both Heads-Up and Multiway, first to act postflop is first in-hand to the left of dealer
@@ -320,15 +382,15 @@ function advanceStreet(r) {
     case 'preflop':
       r.board.push(r.deck.pop(), r.deck.pop(), r.deck.pop());
       r.phase = 'flop';
-      msg(r, `🌊 FLOP: ${r.board.join('  ')}`);
+      msg(r, `🌊 FLOP: [ ${fmtCards(r.board)} ] — Pot: $${r.pot}`);
       break;
     case 'flop':
       r.board.push(r.deck.pop()); r.phase = 'turn';
-      msg(r, `↩️ TURN: ${r.board[3]}`);
+      msg(r, `↩️ TURN: [ ${fmtCard(r.board[3])} ] — Board: [ ${fmtCards(r.board)} ] — Pot: $${r.pot}`);
       break;
     case 'turn':
       r.board.push(r.deck.pop()); r.phase = 'river';
-      msg(r, `🏞️ RIVER: ${r.board[4]}`);
+      msg(r, `🏞️ RIVER: [ ${fmtCard(r.board[4])} ] — Board: [ ${fmtCards(r.board)} ] — Pot: $${r.pot}`);
       break;
     case 'river':
       r.phase = 'showdown';
@@ -348,7 +410,7 @@ function startRunout(r) {
   clearTurnTimer(r);
   clearRunoutTimer(r);
   refundUncalledBet(r);
-  for (const p of r.players) { p.bet = 0; p.acted = false; p.lastAct = null; }
+  for (const p of r.players) { p.bet = 0; p.acted = false; p.canRaise = true; p.lastAct = null; }
   r.roundBet = 0;
   r.lastRaise = r.cfg.bb;
 
@@ -389,7 +451,7 @@ function stepRunout(r) {
     // Deal Flop (3 cards)
     r.board.push(r.deck.pop(), r.deck.pop(), r.deck.pop());
     r.phase = 'flop';
-    msg(r, `🌊 FLOP: ${r.board.join('  ')}`);
+    msg(r, `🌊 FLOP: [ ${fmtCards(r.board)} ] — Pot: $${r.pot}`);
     broadcast(r);
     r.runoutTimer = setTimeout(() => {
       r.runoutTimer = null;
@@ -403,7 +465,7 @@ function stepRunout(r) {
     const turnCard = r.deck.pop();
     r.board.push(turnCard);
     r.phase = 'turn';
-    msg(r, `↩️ TURN: ${turnCard}`);
+    msg(r, `↩️ TURN: [ ${fmtCard(turnCard)} ] — Board: [ ${fmtCards(r.board)} ] — Pot: $${r.pot}`);
     broadcast(r);
     r.runoutTimer = setTimeout(() => {
       r.runoutTimer = null;
@@ -417,7 +479,7 @@ function stepRunout(r) {
     const riverCard = r.deck.pop();
     r.board.push(riverCard);
     r.phase = 'river';
-    msg(r, `🏞️ RIVER: ${riverCard}`);
+    msg(r, `🏞️ RIVER: [ ${fmtCard(riverCard)} ] — Board: [ ${fmtCards(r.board)} ] — Pot: $${r.pot}`);
     broadcast(r);
     r.runoutTimer = setTimeout(() => {
       r.runoutTimer = null;
@@ -442,16 +504,18 @@ function doShowdown(r) {
   }
 
   r.showdownHands = true;
-  msg(r, '🏆 SHOWDOWN');
+  msg(r, `🏆 SHOWDOWN — Final Board: [ ${fmtCards(r.board)} ]`);
 
   const ev = cont.map(p => ({ player: p, hand: Hand.solve([...p.hole, ...r.board]) }));
-  const desc = ev.map(e => `${e.player.name}: [${e.player.hole.join(' ')}] — ${e.hand.descr}`).join('  |  ');
-  msg(r, `🃏 ${desc}`);
+  for (const e of ev) {
+    msg(r, `🃏 ${e.player.name}: [ ${fmtCards(e.player.hole)} ] — ${e.hand.descr}`);
+  }
 
   awardPot(r, cont, ev);
 }
 
 function distributePotShare(r, tierWinners, tierPot, winningsMap) {
+  if (!tierWinners || tierWinners.length === 0 || tierPot <= 0) return;
   const share = Math.floor(tierPot / tierWinners.length);
   const rem   = tierPot - share * tierWinners.length;
 
@@ -462,17 +526,19 @@ function distributePotShare(r, tierWinners, tierPot, winningsMap) {
   if (rem > 0) {
     // Odd chip goes to player closest to left of dealer button
     const n = r.players.length;
-    const sorted = [...tierWinners].sort((a, b) => {
-      const idxA = r.players.indexOf(a);
-      const idxB = r.players.indexOf(b);
-      const distA = (idxA - (r.dealerIdx + 1) + n) % n;
-      const distB = (idxB - (r.dealerIdx + 1) + n) % n;
-      return distA - distB;
-    });
+    if (n > 0) {
+      const sorted = [...tierWinners].sort((a, b) => {
+        const idxA = r.players.indexOf(a);
+        const idxB = r.players.indexOf(b);
+        const distA = ((idxA - (r.dealerIdx + 1)) % n + n) % n;
+        const distB = ((idxB - (r.dealerIdx + 1)) % n + n) % n;
+        return distA - distB;
+      });
 
-    for (let i = 0; i < rem; i++) {
-      const lucky = sorted[i % sorted.length];
-      winningsMap.set(lucky, winningsMap.get(lucky) + 1);
+      for (let i = 0; i < rem; i++) {
+        const lucky = sorted[i % sorted.length];
+        if (lucky) winningsMap.set(lucky, (winningsMap.get(lucky) || 0) + 1);
+      }
     }
   }
 }
@@ -491,14 +557,14 @@ function awardPot(r, contenders, ev) {
     winner.wins = (winner.wins || 0) + 1;
 
     r.result = {
-      winners: [{ name: winner.name, amt: total, hd: null, hole: winner.hole }],
+      winners: [{ name: winner.name, amt: total, hd: null, hole: null }],
       allHands: null,
       totalPot: total,
     };
     r.pot = 0;
     r.phase = 'showdown';
     r.showdownHands = false; // MUCK: Cards hidden when opponents folded!
-    msg(r, `🏆 ${winner.name} wins $${total}`);
+    msg(r, `🏆 ${winner.name} wins $${total} (all opponents folded)`);
     broadcast(r);
 
     scheduleNextHand(r);
@@ -594,7 +660,7 @@ function awardPot(r, contenders, ev) {
       p.wins = (p.wins || 0) + 1;
       const hd = ev.find(e => e.player === p)?.hand.descr || null;
       wr.push({ name: p.name, amt, hd, hole: p.hole });
-      msg(r, `🏆 ${p.name} wins $${amt}${hd ? ` — ${hd}` : ''}`);
+      msg(r, `🏆 ${p.name} wins $${amt}${hd ? ` with ${hd}` : ''} [ ${fmtCards(p.hole)} ]`);
     }
   }
 
@@ -645,7 +711,7 @@ function startHand(r) {
 
   for (const p of r.players) {
     p.hole = []; p.bet = 0; p.totalBet = 0;
-    p.folded = false; p.allIn = false; p.acted = false; p.lastAct = null;
+    p.folded = false; p.allIn = false; p.acted = false; p.canRaise = true; p.lastAct = null;
     if (p.waitingNextHand && p.chips > 0) {
       p.waitingNextHand = false;
       p.active = true;
@@ -702,6 +768,7 @@ function startHand(r) {
   r.lastRaise = r.cfg.bb;
 
   r.phase = 'preflop';
+  msg(r, `══════════════════════════════════`);
   msg(r, `🃏 Hand #${r.handNum} — Dealer: ${r.players[r.dealerIdx].name}`);
   msg(r, `Blinds: ${r.players[sbI].name} (SB $${r.cfg.sb}) / ${r.players[bbI].name} (BB $${r.cfg.bb})`);
 
@@ -721,14 +788,14 @@ function doAction(r, sid, action, amount) {
 
   switch (action) {
     case 'fold':
-      cur.folded = true; cur.acted = true; cur.lastAct = 'FOLD';
+      cur.folded = true; cur.acted = true; cur.canRaise = false; cur.lastAct = 'FOLD';
       msg(r, `❌ ${cur.name} folds`);
       refundUncalledBet(r);
       break;
 
     case 'check':
       if (toCall > 0) return `Can't check — must call $${toCall}`;
-      cur.acted = true; cur.lastAct = 'CHECK';
+      cur.acted = true; cur.canRaise = false; cur.lastAct = 'CHECK';
       msg(r, `✓ ${cur.name} checks`);
       break;
 
@@ -736,12 +803,12 @@ function doAction(r, sid, action, amount) {
       if (toCall <= 0) return 'Nothing to call';
       const a = Math.min(toCall, cur.chips);
       cur.chips -= a; cur.bet += a; cur.totalBet += a; r.pot += a;
-      cur.acted = true;
+      cur.acted = true; cur.canRaise = false;
       if (cur.chips === 0) {
         cur.allIn = true; cur.lastAct = 'ALL IN';
-        msg(r, `💥 ${cur.name} calls $${a} ALL IN`);
+        msg(r, `💥 ${cur.name} calls $${a} ALL IN — Pot: $${r.pot}`);
       } else {
-        cur.lastAct = 'CALL'; msg(r, `📞 ${cur.name} calls $${a}`);
+        cur.lastAct = 'CALL'; msg(r, `📞 ${cur.name} calls $${a} (Total bet: $${cur.bet}) — Pot: $${r.pot}`);
       }
       break;
     }
@@ -749,6 +816,9 @@ function doAction(r, sid, action, amount) {
     case 'raise': {
       const opponentsWithChips = r.players.filter(p => p !== cur && p.active && p.connected && !p.folded && p.chips > 0);
       if (opponentsWithChips.length === 0) return 'Cannot raise — all opponents are all-in';
+
+      // Enforce incomplete raise rule: action not reopened for players who already acted
+      if (cur.canRaise === false) return 'Cannot raise — action was not reopened by a full raise';
 
       const tot = Math.floor(Number(amount));
       if (!Number.isFinite(tot) || isNaN(tot) || tot <= 0) return 'Invalid amount';
@@ -769,18 +839,29 @@ function doAction(r, sid, action, amount) {
         for (const p of r.players) {
           if (p !== cur && p.active && p.connected && !p.folded && !p.allIn) {
             p.acted = false;
+            p.canRaise = true; // Reopen action for other players
+          }
+        }
+      } else {
+        // Incomplete raise: players who must call need to act, but canRaise is NOT reopened
+        for (const p of r.players) {
+          if (p !== cur && p.active && p.connected && !p.folded && !p.allIn) {
+            if (p.bet < eff) {
+              p.acted = false;
+            }
           }
         }
       }
 
       cur.chips -= add; cur.bet += add; cur.totalBet += add; r.pot += add; r.roundBet = eff;
       cur.acted = true;
+      cur.canRaise = false;
 
       if (cur.chips === 0) {
         cur.allIn = true; cur.lastAct = 'ALL IN';
-        msg(r, `💥 ${cur.name} raises to $${eff} ALL IN`);
+        msg(r, `💥 ${cur.name} raises to $${eff} ALL IN (+$${add}) — Pot: $${r.pot}`);
       } else {
-        cur.lastAct = `RAISE $${eff}`; msg(r, `⬆️ ${cur.name} raises to $${eff}`);
+        cur.lastAct = `RAISE $${eff}`; msg(r, `🔺 ${cur.name} raises to $${eff} (+$${add}) — Pot: $${r.pot}`);
       }
       break;
     }
@@ -797,6 +878,16 @@ function doAction(r, sid, action, amount) {
           for (const p of r.players) {
             if (p !== cur && p.active && p.connected && !p.folded && !p.allIn) {
               p.acted = false;
+              p.canRaise = true;
+            }
+          }
+        } else {
+          // Incomplete raise: require players behind with lower bet to act
+          for (const p of r.players) {
+            if (p !== cur && p.active && p.connected && !p.folded && !p.allIn) {
+              if (p.bet < newTot) {
+                p.acted = false;
+              }
             }
           }
         }
@@ -804,8 +895,8 @@ function doAction(r, sid, action, amount) {
       }
 
       cur.bet += chips; cur.totalBet += chips; r.pot += chips; cur.chips = 0;
-      cur.allIn = true; cur.acted = true; cur.lastAct = 'ALL IN';
-      msg(r, `💥 ${cur.name} ALL IN $${chips}`);
+      cur.allIn = true; cur.acted = true; cur.canRaise = false; cur.lastAct = 'ALL IN';
+      msg(r, `💥 ${cur.name} goes ALL IN with $${chips} (Total bet: $${newTot}) — Pot: $${r.pot}`);
       break;
     }
 
@@ -828,6 +919,34 @@ function doAction(r, sid, action, amount) {
   return null;
 }
 
+function destroyRoom(rid) {
+  const r = rooms[rid];
+  if (!r) return;
+
+  clearTurnTimer(r);
+  clearRunoutTimer(r);
+  if (r.nextHandTimer) { clearTimeout(r.nextHandTimer); r.nextHandTimer = null; }
+  if (r.roomDestroyTimer) { clearTimeout(r.roomDestroyTimer); r.roomDestroyTimer = null; }
+
+  for (const p of r.players) {
+    if (p.disconnectTimer) {
+      clearTimeout(p.disconnectTimer);
+      p.disconnectTimer = null;
+    }
+  }
+
+  for (const sid in sock2room) {
+    if (sock2room[sid] === rid) {
+      delete sock2room[sid];
+    }
+  }
+
+  delete rooms[rid];
+  console.log(`[x] Room ${rid} completely cleaned up and destroyed.`);
+}
+
+const DISCONNECT_GRACE_MS = () => (server && server.listening && process.env.NODE_ENV !== 'test') ? 25000 : 0;
+
 function handleDisconnect(sid) {
   const rid = sock2room[sid];
   delete sock2room[sid];
@@ -836,35 +955,9 @@ function handleDisconnect(sid) {
   const p = r.players.find(pl => pl.sid === sid);
   if (!p) return;
 
-  msg(r, `⚠️ ${p.name} disconnected`);
   p.connected = false;
 
-  if (r.status === 'playing' && r.phase && r.phase !== 'showdown') {
-    p.folded = true;
-    refundUncalledBet(r);
-
-    const ih = inHandP(r);
-    if (ih.length <= 1) {
-      clearTurnTimer(r);
-      clearRunoutTimer(r);
-      awardPot(r, ih, null);
-      broadcast(r);
-    } else {
-      const isCur = r.players[r.curIdx]?.sid === sid;
-      if (isCur) {
-        clearTurnTimer(r);
-        if (bettingDone(r)) advanceStreet(r);
-        else advancePlayer(r);
-      } else if (bettingDone(r)) {
-        clearTurnTimer(r);
-        advanceStreet(r);
-      }
-      broadcast(r);
-    }
-  } else {
-    broadcast(r);
-  }
-
+  // Pass host if host disconnected
   if (r.hostId === sid) {
     const rem = r.players.filter(pl => pl.connected);
     if (rem.length) {
@@ -873,12 +966,76 @@ function handleDisconnect(sid) {
     }
   }
 
+  // If ALL players disconnected, start room destroy timer (60s)
   if (!r.players.some(pl => pl.connected)) {
-    clearTurnTimer(r);
-    clearRunoutTimer(r);
-    if (r.nextHandTimer) { clearTimeout(r.nextHandTimer); r.nextHandTimer = null; }
-    delete rooms[r.id];
+    if (r.roomDestroyTimer) clearTimeout(r.roomDestroyTimer);
+    r.roomDestroyTimer = setTimeout(() => {
+      if (rooms[r.id] && !rooms[r.id].players.some(pl => pl.connected)) {
+        destroyRoom(r.id);
+      }
+    }, 60000);
+  }
+
+  // If in an active hand
+  if (r.status === 'playing' && r.phase && r.phase !== 'showdown' && !p.folded && !p.allIn) {
+    // Only mobile users get a disconnect grace period for app-switching. Desktop disconnects fold immediately.
+    const graceMs = p.isMobile ? DISCONNECT_GRACE_MS() : 0;
+    if (graceMs === 0) {
+      msg(r, `⚠️ ${p.name} disconnected`);
+      p.folded = true;
+      refundUncalledBet(r);
+
+      const ih = inHandP(r);
+      if (ih.length <= 1) {
+        clearTurnTimer(r);
+        clearRunoutTimer(r);
+        awardPot(r, ih, null);
+      } else {
+        const isCur = r.players[r.curIdx]?.sid === sid;
+        if (isCur) {
+          clearTurnTimer(r);
+          if (bettingDone(r)) advanceStreet(r);
+          else advancePlayer(r);
+        } else if (bettingDone(r)) {
+          clearTurnTimer(r);
+          advanceStreet(r);
+        }
+      }
+      broadcast(r);
+    } else {
+      // Mobile app-switch grace period: silent waiting without spamming reconnect log
+      if (p.disconnectTimer) clearTimeout(p.disconnectTimer);
+      p.disconnectTimer = setTimeout(() => {
+        p.disconnectTimer = null;
+        if (!p.connected && r.status === 'playing' && r.phase && r.phase !== 'showdown' && !p.folded) {
+          msg(r, `⏱️ ${p.name} disconnected too long — auto folded`);
+          p.folded = true;
+          refundUncalledBet(r);
+
+          const ih = inHandP(r);
+          if (ih.length <= 1) {
+            clearTurnTimer(r);
+            clearRunoutTimer(r);
+            awardPot(r, ih, null);
+            broadcast(r);
+          } else {
+            const isCur = r.players[r.curIdx]?.sid === p.sid;
+            if (isCur) {
+              clearTurnTimer(r);
+              if (bettingDone(r)) advanceStreet(r);
+              else advancePlayer(r);
+            } else if (bettingDone(r)) {
+              clearTurnTimer(r);
+              advanceStreet(r);
+            }
+            broadcast(r);
+          }
+        }
+      }, graceMs);
+      broadcast(r);
+    }
   } else {
+    msg(r, `⚠️ ${p.name} disconnected`);
     broadcast(r);
   }
 }
@@ -888,27 +1045,27 @@ io.on('connection', socket => {
   console.log(`[+] ${socket.id}`);
 
   socket.on('create_room', (d, cb) => {
-    if (!d.name?.trim()) return cb({ err: 'Name required' });
+    const cleanName = sanitizeName(d.name);
+    if (!cleanName) return cb({ err: 'Name required (1-16 characters)' });
     const id  = createRoom(socket.id, { chips: d.chips, sb: d.sb, bb: d.bb, ante: d.ante, maxP: d.maxP });
-    const res = addOrReconnectPlayer(id, socket.id, d.name.trim(), d.token);
+    const res = addOrReconnectPlayer(id, socket.id, cleanName, d.token, d.isMobile);
     if (res.err) return cb({ err: res.err });
     socket.join(id);
-    msg(rooms[id], `👑 ${d.name.trim()} created the room`);
+    msg(rooms[id], `👑 ${cleanName} created the room`);
     broadcast(rooms[id]);
     cb({ ok: true, id, token: res.player.token });
   });
 
   socket.on('join_room', (d, cb) => {
-    if (!d.name?.trim()) return cb({ err: 'Name required' });
+    const cleanName = sanitizeName(d.name);
+    if (!cleanName) return cb({ err: 'Name required (1-16 characters)' });
     const id = d.id?.toUpperCase();
     if (!rooms[id]) return cb({ err: 'Room not found' });
-    const res = addOrReconnectPlayer(id, socket.id, d.name.trim(), d.token);
+    const res = addOrReconnectPlayer(id, socket.id, cleanName, d.token, d.isMobile);
     if (res.err) return cb({ err: res.err });
     socket.join(id);
-    if (res.reconnected) {
-      msg(rooms[id], `🔄 ${d.name.trim()} reconnected`);
-    } else {
-      msg(rooms[id], `🚪 ${d.name.trim()} joined${res.player.waitingNextHand ? ' (waiting for next hand)' : ''}`);
+    if (!res.reconnected) {
+      msg(rooms[id], `🚪 ${cleanName} joined${res.player.waitingNextHand ? ' (waiting for next hand)' : ''}`);
     }
     broadcast(rooms[id]);
     cb({ ok: true, id, token: res.player.token, reconnected: res.reconnected });
@@ -950,10 +1107,17 @@ io.on('connection', socket => {
     const p = r.players.find(p => p.sid === socket.id);
     if (!p) return cb({ err: 'Player not found' });
     if (p.chips > 0) return cb({ err: 'Still have chips' });
+
+    // Block rebuy if currently involved in an active hand before showdown
+    const inLiveHand = r.status === 'playing' && r.phase && r.phase !== 'showdown' && p.hole && p.hole.length > 0 && !p.folded;
+    if (inLiveHand) {
+      return cb({ err: 'Cannot rebuy while hand is in progress. Wait for showdown.' });
+    }
+
     p.chips = r.cfg.chips;
-    p.waitingNextHand = true;
-    p.active = false;
-    msg(r, `💵 ${p.name} rebuys $${r.cfg.chips} (enters next hand)`);
+    p.waitingNextHand = (r.status === 'playing');
+    p.active = (r.status !== 'playing');
+    msg(r, `💵 ${p.name} rebuys $${r.cfg.chips}${p.waitingNextHand ? ' (enters next hand)' : ''}`);
     broadcast(r);
     cb({ ok: true });
   });
@@ -987,6 +1151,16 @@ io.on('connection', socket => {
     if (!p || !d.text?.trim()) return;
     msg(r, `💬 ${p.name}: ${d.text.trim().slice(0,200)}`);
     broadcast(r);
+  });
+
+  socket.on('sync_state', cb => {
+    const rid = sock2room[socket.id], r = rid && rooms[rid];
+    if (r) {
+      socket.emit('state', filterState(r, socket.id));
+      if (cb) cb({ ok: true });
+    } else {
+      if (cb) cb({ err: 'Not in room' });
+    }
   });
 
   socket.on('disconnect', () => {

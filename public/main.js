@@ -5,12 +5,29 @@ const socket = io();
 let myId = null, roomId = null, S = null;
 let raiseOpen = false, overlayOn = false, logOpen = false, chatOpen = false;
 let prevBoardLen = 0;
-let timerInterval = null, timerTurnStartMs = null, seatTimerInterval = null;
+let timerRafId = null;
+
+function escapeHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function getAvatarClass(name) {
+  if (!name) return 'ac0';
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  return 'ac' + (hash % 9);
+}
 
 const SUIT_SYM  = { s:'♠', h:'♥', d:'♦', c:'♣' };
 const SUIT_CLS  = { s:'c-s', h:'c-h', d:'c-d', c:'c-c' };
 
-const isMobile = () => window.matchMedia('(max-width: 768px)').matches;
+const isMobile = () => window.matchMedia('(max-width: 768px)').matches || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
 /* Opponent seat positions on mobile vertical table (<768px, PokerNow style) */
 const MOBILE_OPP_POS = {
@@ -40,7 +57,145 @@ window.addEventListener('resize', () => {
   if (S && S.status === 'playing') renderGame(S);
 });
 
-socket.on('connect', () => { myId = socket.id; });
+const SESSION_KEY = 'poker_session_v1';
+
+function saveSession(rId, token, name) {
+  if (!rId || !token || !name) return;
+  const data = { rId, token, name, ts: Date.now() };
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(data));
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(data));
+  } catch (e) {}
+}
+
+function getSession() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY) || localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data.rId || !data.token || (Date.now() - data.ts > 12 * 3600 * 1000)) {
+      clearSession();
+      return null;
+    }
+    return data;
+  } catch (e) {
+    return null;
+  }
+}
+
+function clearSession() {
+  try {
+    localStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem(SESSION_KEY);
+  } catch (e) {}
+}
+
+let toastTimer = null;
+function showNetToast(msg, duration = 0) {
+  if (!isMobile()) return; // Mobile only
+  const el = document.getElementById('net-toast');
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.remove('hidden');
+  if (toastTimer) clearTimeout(toastTimer);
+  if (duration > 0) {
+    toastTimer = setTimeout(() => {
+      el.classList.add('hidden');
+      toastTimer = null;
+    }, duration);
+  }
+}
+
+function hideNetToast() {
+  const el = document.getElementById('net-toast');
+  if (el && !toastTimer) el.classList.add('hidden');
+}
+
+let isReconnecting = false;
+function attemptSessionRestore() {
+  if (!isMobile()) return; // Desktop does not need app-switch restore
+  const session = getSession();
+  if (!session || !session.rId || !session.token) return;
+  if (!socket.connected) {
+    socket.connect();
+    return;
+  }
+  if (isReconnecting) return;
+  isReconnecting = true;
+  showNetToast('🔄 Đang đồng bộ lại ván chơi...');
+
+  const restoreTimeout = setTimeout(() => { isReconnecting = false; }, 4000);
+
+  socket.emit('join_room', {
+    id: session.rId,
+    name: session.name,
+    token: session.token,
+    isMobile: true
+  }, res => {
+    clearTimeout(restoreTimeout);
+    isReconnecting = false;
+    if (res && res.ok) {
+      showNetToast('✅ Đã kết nối lại ván chơi', 2000);
+      socket.emit('sync_state');
+    } else {
+      if (res && res.err) {
+        console.warn('Session restore failed:', res.err);
+        if (res.err === 'Room not found') {
+          clearSession();
+          showNetToast('⚠️ Phòng chơi đã kết thúc', 3000);
+          show('lobby');
+        }
+      }
+    }
+  });
+}
+
+function confirmLeaveRoom() {
+  if (confirm('Bạn có chắc muốn rời khỏi phòng chơi này không?')) {
+    clearSession();
+    location.reload();
+  }
+}
+function leaveRoom() {
+  clearSession();
+  location.reload();
+}
+
+socket.on('connect', () => {
+  myId = socket.id;
+  hideNetToast();
+  if (isMobile()) attemptSessionRestore();
+});
+socket.on('disconnect', () => {
+  if (isMobile()) showNetToast('⚠️ Mất kết nối — Đang thử lại...');
+});
+socket.on('connect_error', () => {
+  if (isMobile()) showNetToast('⚠️ Lỗi kết nối — Đang thử lại...');
+});
+
+// Mobile-only app-switch and tab focus listeners
+document.addEventListener('visibilitychange', () => {
+  if (!isMobile()) return;
+  if (document.visibilityState === 'visible') {
+    if (!socket.connected) socket.connect();
+    attemptSessionRestore();
+  }
+});
+window.addEventListener('pageshow', () => {
+  if (!isMobile()) return;
+  if (!socket.connected) socket.connect();
+  attemptSessionRestore();
+});
+window.addEventListener('focus', () => {
+  if (!isMobile()) return;
+  attemptSessionRestore();
+});
+window.addEventListener('online', () => {
+  if (!isMobile()) return;
+  if (!socket.connected) socket.connect();
+  attemptSessionRestore();
+});
+
 socket.on('state', st => {
   S = st; roomId = st.id;
   if (st.status === 'waiting')  { show('waiting'); renderWait(st); }
@@ -63,21 +218,30 @@ function switchTab(t) {
 function createRoom() {
   const name = document.getElementById('c-name').value.trim();
   if (!name) return lerr('Enter your name');
+  const mob = isMobile();
   socket.emit('create_room', {
     name,
+    isMobile: mob,
     chips: +document.getElementById('c-chips').value || 100000,
     sb:    +document.getElementById('c-sb').value    || 2000,
     bb:    +document.getElementById('c-bb').value    || 4000,
     ante:  +document.getElementById('c-ante').value  || 0,
     maxP:  +document.getElementById('c-max').value   || 9,
-  }, r => { if (r.err) lerr(r.err); });
+  }, r => {
+    if (r.err) return lerr(r.err);
+    if (r.ok && mob) saveSession(r.id, r.token, name);
+  });
 }
 function joinRoom() {
   const name = document.getElementById('j-name').value.trim();
   const code = document.getElementById('j-code').value.trim().toUpperCase();
   if (!name) return lerr('Enter your name');
   if (!code) return lerr('Enter room code');
-  socket.emit('join_room', { name, id: code }, r => { if (r.err) lerr(r.err); });
+  const mob = isMobile();
+  socket.emit('join_room', { name, id: code, isMobile: mob }, r => {
+    if (r.err) return lerr(r.err);
+    if (r.ok && mob) saveSession(r.id, r.token, name);
+  });
 }
 function lerr(m) {
   const e = document.getElementById('lobby-err');
@@ -101,8 +265,11 @@ function renderWait(st) {
   ul.innerHTML = '';
   st.players.forEach((p,i) => {
     const li = document.createElement('li');
-    li.innerHTML = `<div class="w-av ac${i%9}">${p.name[0].toUpperCase()}</div>
-      <span>${p.name}${p.isMe?' <em style="color:var(--txt3)">(you)</em>':''}</span>
+    const safeName = escapeHtml(p.name);
+    const initial = p.name ? escapeHtml(p.name[0].toUpperCase()) : '?';
+    const avCls = getAvatarClass(p.name);
+    li.innerHTML = `<div class="w-av ${avCls}">${initial}</div>
+      <span>${safeName}${p.isMe?' <em style="color:var(--txt3)">(you)</em>':''}</span>
       ${p.sid===st.hostId?'<span>👑</span>':''}
       ${p.wins?`<span style="margin-left:auto;color:var(--gold);font-size:.68rem">🏆×${p.wins}</span>`:''}`;
     ul.appendChild(li);
@@ -300,7 +467,7 @@ function renderSeats(st, opps) {
     } else if (p.lastAct) {
       const key = p.lastAct.toLowerCase().split(' ')[0];
       const acls = {fold:'sa-fold',check:'sa-check',call:'sa-call',raise:'sa-raise',all:'sa-allin',bet:'sa-bet'}[key] || 'sa-raise';
-      actHtml = `<div class="seat-act ${acls}">${p.lastAct}</div>`;
+      actHtml = `<div class="seat-act ${acls}">${escapeHtml(p.lastAct)}</div>`;
     }
 
     /* Timer bar — at bottom of seat-info-right */
@@ -318,7 +485,7 @@ function renderSeats(st, opps) {
         <div class="${infoRightCls}">
           <div class="seat-name-row">
             ${dealerHtml}
-            <div class="seat-name">${p.folded ? '<s style="opacity:.5">' + p.name + '</s>' : p.name}</div>
+            <div class="seat-name">${p.folded ? '<s style="opacity:.5">' + escapeHtml(p.name) + '</s>' : escapeHtml(p.name)}</div>
             ${winsHtml}
           </div>
           <div class="seat-chips-val">${fmt(p.chips)}</div>
@@ -371,7 +538,7 @@ function renderMyArea(st, me) {
   if (nrEl) {
     nrEl.innerHTML =
       `<div class="my-header-row">
-         <span class="my-player-name ${isTurn ? 'is-my-turn' : ''}">${me.name}${isTurn ? ' ⚡' : ''}</span>
+         <span class="my-player-name ${isTurn ? 'is-my-turn' : ''}">${escapeHtml(me.name)}${isTurn ? ' ⚡' : ''}</span>
          ${badges}
          ${me.wins > 0 ? `<span class="my-wins-badge">🏆×${me.wins}</span>` : ''}
        </div>
@@ -426,7 +593,7 @@ function renderMyArea(st, me) {
     } else if (me.lastAct) {
       const key = me.lastAct.toLowerCase().split(' ')[0];
       const acls = {fold:'sa-fold',check:'sa-check',call:'sa-call',raise:'sa-raise',all:'sa-allin',bet:'sa-bet'}[key] || 'sa-raise';
-      actHtml = `<div class="seat-act ${acls}">${me.lastAct}</div>`;
+      actHtml = `<div class="seat-act ${acls}">${escapeHtml(me.lastAct)}</div>`;
     }
 
     const timerBar = isTurn && st.turnStartMs
@@ -444,7 +611,7 @@ function renderMyArea(st, me) {
         <div class="${heroInfoCls}">
           <div class="seat-name-row">
             ${dealerHtml}
-            <div class="seat-name">${me.folded ? '<s style="opacity:.5">' + me.name + '</s>' : me.name}</div>
+            <div class="seat-name">${me.folded ? '<s style="opacity:.5">' + escapeHtml(me.name) + '</s>' : escapeHtml(me.name)}</div>
             ${winsHtml}
           </div>
           <div class="seat-chips-val">$${fmt(me.chips)}</div>
@@ -500,6 +667,15 @@ function renderActions(st, me) {
   if (ytl) ytl.classList.add('show');
   if (status) status.textContent = '';
   allBtns.forEach(id=>{ const b=document.getElementById(id); if(b)b.disabled=false; });
+
+  const raiseBtn = document.getElementById('b-raise');
+  if (raiseBtn) {
+    const opponentsWithChips = st.players.filter(p => !p.isMe && p.active && p.connected && !p.folded && p.chips > 0);
+    if (me.canRaise === false || opponentsWithChips.length === 0) {
+      raiseBtn.disabled = true;
+      if (raiseOpen) closeRaise();
+    }
+  }
 
   const toCall = st.roundBet - (me.bet||0);
   const minR   = st.roundBet + (st.lastRaise||st.cfg.bb);
@@ -657,94 +833,216 @@ function triggerRebuy() {
 }
 function aerr(m) { const e=document.getElementById('act-err'); e.textContent=m; setTimeout(()=>e.textContent='',3500); }
 
-/* ─── TIMER ─── */
+/* ─── TIMER (Unified RAF Animation) ─── */
 function updateTimer(st) {
+  if (timerRafId) { cancelAnimationFrame(timerRafId); timerRafId = null; }
   const wrap     = document.getElementById('timer-wrap');
   const fill     = document.getElementById('timer-fill');
   const numEl    = document.getElementById('timer-num');
-  const ytl      = document.getElementById('your-turn-lbl');
   const me       = st.players.find(p=>p.isMe);
   const gIdx     = st.players.findIndex(p=>p.isMe);
-  const isMyTurn = st.curIdx===gIdx;
+  const isMyTurn = st.curIdx === gIdx;
 
-  if (!st.turnStartMs || st.phase==='showdown' || !me || me.folded || me.allIn || st.paused) {
+  if (!st.turnStartMs || st.phase === 'showdown' || !me || me.folded || me.allIn || st.paused) {
     if (wrap) wrap.classList.remove('show');
-    if (timerInterval) { clearInterval(timerInterval); timerInterval=null; }
-    updateSeatTimers(st);
+    const oldSeatTimer = document.querySelector('.seat-timer-bar-fill');
+    if (oldSeatTimer) oldSeatTimer.style.width = '0%';
     return;
   }
 
-  if (!isMyTurn) {
-    if (wrap) wrap.classList.remove('show');
-    if (timerInterval) { clearInterval(timerInterval); timerInterval=null; }
-    updateSeatTimers(st);
-    return;
+  if (wrap) {
+    if (isMyTurn) wrap.classList.add('show');
+    else wrap.classList.remove('show');
   }
 
-  if (wrap) wrap.classList.add('show');
-  timerTurnStartMs = st.turnStartMs;
-  if (timerInterval) clearInterval(timerInterval);
-
-  function tick() {
-    const elapsed   = Date.now() - timerTurnStartMs;
-    const secsLeft  = Math.max(0, 30 - Math.floor(elapsed/1000));
-    const pct       = (secsLeft/30)*100;
-    if (fill) fill.style.width = pct+'%';
-    if (numEl) numEl.textContent = secsLeft + 's';
-    const warn = secsLeft<=10, danger = secsLeft<=5;
-    if (fill)  { fill.classList.toggle('tw', warn&&!danger); fill.classList.toggle('td', danger); }
-    if (numEl) { numEl.classList.toggle('tw', warn&&!danger); numEl.classList.toggle('td', danger); }
-    if (secsLeft===0) clearInterval(timerInterval);
-  }
-  tick();
-  timerInterval = setInterval(tick, 200);
-  updateSeatTimers(st);
-}
-
-function updateSeatTimers(st) {
-  if (seatTimerInterval) { clearInterval(seatTimerInterval); seatTimerInterval=null; }
-  if (!st.turnStartMs) return;
-  seatTimerInterval = setInterval(() => {
+  function loop() {
     const elapsed  = Date.now() - st.turnStartMs;
-    const secsLeft = Math.max(0, 30 - elapsed/1000);
-    const pct      = (secsLeft/30)*100;
-    const el = document.getElementById(`seat-timer-${st.curIdx}`);
-    if (el) {
-      el.style.width = pct+'%';
-      const warn=secsLeft<=10, danger=secsLeft<=5;
-      el.className = 'seat-timer-bar-fill'+(danger?' td':warn?' tw':'');
-    } else {
-      clearInterval(seatTimerInterval); seatTimerInterval=null;
+    const secsLeft = Math.max(0, 30 - elapsed / 1000);
+    const pct      = Math.min(100, Math.max(0, (secsLeft / 30) * 100));
+    const warn     = secsLeft <= 10, danger = secsLeft <= 5;
+
+    if (isMyTurn) {
+      if (fill) {
+        fill.style.width = pct + '%';
+        fill.classList.toggle('tw', warn && !danger);
+        fill.classList.toggle('td', danger);
+      }
+      if (numEl) {
+        numEl.textContent = Math.ceil(secsLeft) + 's';
+        numEl.classList.toggle('tw', warn && !danger);
+        numEl.classList.toggle('td', danger);
+      }
     }
-  }, 200);
+
+    const seatEl = document.getElementById(`seat-timer-${st.curIdx}`);
+    if (seatEl) {
+      seatEl.style.width = pct + '%';
+      seatEl.className = 'seat-timer-bar-fill' + (danger ? ' td' : warn ? ' tw' : '');
+    }
+
+    if (secsLeft > 0 && !st.paused && S && S.turnStartMs === st.turnStartMs) {
+      timerRafId = requestAnimationFrame(loop);
+    } else {
+      timerRafId = null;
+    }
+  }
+
+  timerRafId = requestAnimationFrame(loop);
 }
 
-/* ─── LOG ─── */
-let lastLogLen = 0;
-function renderLog(msgs) {
-  if (msgs.length===lastLogLen) return;
-  lastLogLen = msgs.length;
-  const logBody = document.getElementById('log-body');
-  const chatMsgs= document.getElementById('chat-msgs');
-  logBody.innerHTML=''; chatMsgs.innerHTML='';
-  msgs.forEach(m => {
-    const t   = m.t;
-    const isW = t.includes('wins')||t.includes('🏆');
-    const isH = t.includes('Hand #')||t.includes('FLOP')||t.includes('TURN')||t.includes('RIVER');
-    const isC = t.startsWith('💬');
-    const cls = isW?'le-win':isH?'le-hand':isC?'le-chat':'';
-    const div = document.createElement('div');
-    div.className='log-e'+(cls?' '+cls:''); div.textContent=t;
-    logBody.appendChild(div);
-    if (isC) chatMsgs.appendChild(div.cloneNode(true));
+/* ─── LOG & CARD PARSER ─── */
+const SUIT_TO_CLASS = {
+  '♠': 'lc-s',
+  '♥': 'lc-h',
+  '♦': 'lc-d',
+  '♣': 'lc-c',
+};
+
+function formatLogCards(text) {
+  if (!text) return '';
+  return text.replace(/\b(10|[2-9TJQKA])([♠♥♦♣])/g, (match, rank, suit) => {
+    const cls = SUIT_TO_CLASS[suit] || '';
+    return `<span class="log-c ${cls}"><strong>${rank}</strong>${suit}</span>`;
   });
-  logBody.scrollTop = 99999;
-  chatMsgs.scrollTop= 99999;
+}
+
+let allMsgsCache = [];
+let logFilterTerm = '';
+let userScrolledLog = false;
+let lastRenderedMsgTs = 0;
+
+const logBodyEl = document.getElementById('log-body');
+if (logBodyEl) {
+  logBodyEl.addEventListener('scroll', () => {
+    const atBottom = (logBodyEl.scrollHeight - logBodyEl.scrollTop - logBodyEl.clientHeight) < 40;
+    userScrolledLog = !atBottom;
+  });
+}
+
+function onLogFilter(val) {
+  logFilterTerm = (val || '').trim().toLowerCase();
+  renderFilteredLog();
+}
+
+function createLogDiv(m) {
+  const t = m.t || '';
+  if (t.startsWith('════')) {
+    const div = document.createElement('div');
+    div.className = 'log-divider';
+    return div;
+  }
+
+  const isHandHdr  = t.includes('Hand #');
+  const isStreet   = t.includes('FLOP') || t.includes('TURN') || t.includes('RIVER');
+  const isShowdown = t.includes('SHOWDOWN');
+  const isShowCard = t.startsWith('🎴');
+  const isWin      = t.includes('wins') || t.startsWith('🏆');
+  const isRaise    = t.includes('raises') || t.includes('ALL IN');
+  const isCall     = t.includes('calls');
+  const isCheck    = t.includes('checks');
+  const isFold     = t.includes('folds');
+  const isSys      = t.startsWith('🔄') || t.startsWith('⚠️') || t.startsWith('🚪') || t.startsWith('👑') || t.startsWith('⏱️');
+  const isChat     = t.startsWith('💬');
+
+  let cls = '';
+  if (isWin) cls = 'le-win';
+  else if (isHandHdr) cls = 'le-hand-hdr';
+  else if (isStreet) cls = 'le-street';
+  else if (isShowdown) cls = 'le-showdown';
+  else if (isShowCard) cls = 'le-showdown-cards';
+  else if (isRaise) cls = 'le-raise';
+  else if (isCall) cls = 'le-call';
+  else if (isCheck) cls = 'le-check';
+  else if (isFold) cls = 'le-fold';
+  else if (isSys) cls = 'le-sys';
+  else if (isChat) cls = 'le-chat';
+
+  const div = document.createElement('div');
+  div.className = 'log-e' + (cls ? ' ' + cls : '');
+  div.innerHTML = formatLogCards(escapeHtml(t));
+  return div;
+}
+
+function renderFilteredLog() {
+  const logBody = document.getElementById('log-body');
+  if (!logBody) return;
+
+  const baseMsgs = allMsgsCache.filter(m => {
+    const txt = m.t || '';
+    return !txt.includes('reconnect') && !txt.includes('connection dropped');
+  });
+
+  const msgs = logFilterTerm
+    ? baseMsgs.filter(m => (m.t || '').toLowerCase().includes(logFilterTerm))
+    : baseMsgs;
+
+  let handCount = 0;
+  baseMsgs.forEach(m => {
+    if (m.t && m.t.includes('Hand #')) handCount++;
+  });
+  const countEl = document.getElementById('log-count');
+  if (countEl) countEl.textContent = `${handCount} ván · ${msgs.length} mục`;
+
+  logBody.innerHTML = '';
+  const frag = document.createDocumentFragment();
+  msgs.forEach(m => {
+    frag.appendChild(createLogDiv(m));
+  });
+  logBody.appendChild(frag);
+
+  if (!userScrolledLog) {
+    logBody.scrollTop = logBody.scrollHeight;
+  }
+}
+
+function renderLog(msgs) {
+  if (!msgs) return;
+  allMsgsCache = msgs;
+
+  const chatMsgs = document.getElementById('chat-msgs');
+  if (chatMsgs) {
+    const chats = msgs.filter(m => m.t && m.t.startsWith('💬'));
+    chatMsgs.innerHTML = '';
+    chats.forEach(m => {
+      const div = document.createElement('div');
+      div.className = 'log-e le-chat';
+      div.textContent = m.t;
+      chatMsgs.appendChild(div);
+    });
+    chatMsgs.scrollTop = chatMsgs.scrollHeight;
+  }
+
+  const logBody = document.getElementById('log-body');
+  if (!logBody) return;
+
+  // Incremental append: if not filtering and already has rendered logs
+  if (!logFilterTerm && lastRenderedMsgTs > 0 && logBody.children.length > 0) {
+    const newMsgs = msgs.filter(m => (m.ts || 0) > lastRenderedMsgTs);
+    if (newMsgs.length > 0 && newMsgs.length < msgs.length) {
+      const frag = document.createDocumentFragment();
+      newMsgs.forEach(m => {
+        frag.appendChild(createLogDiv(m));
+      });
+      logBody.appendChild(frag);
+      lastRenderedMsgTs = msgs[msgs.length - 1].ts || Date.now();
+      if (!userScrolledLog) logBody.scrollTop = logBody.scrollHeight;
+      return;
+    }
+  }
+
+  lastRenderedMsgTs = msgs.length ? (msgs[msgs.length - 1].ts || Date.now()) : 0;
+  renderFilteredLog();
 }
 
 function toggleLog() {
   logOpen = !logOpen;
-  document.getElementById('log-overlay').classList.toggle('hidden', !logOpen);
+  const overlay = document.getElementById('log-overlay');
+  overlay.classList.toggle('hidden', !logOpen);
+  if (logOpen) {
+    userScrolledLog = false;
+    const logBody = document.getElementById('log-body');
+    if (logBody) logBody.scrollTop = logBody.scrollHeight;
+  }
 }
 function toggleChat() {
   chatOpen = !chatOpen;
@@ -790,7 +1088,7 @@ function showWin(res) {
       <div class="split-pot-grid">
         ${res.winners.map(w => `
           <div class="split-pot-item">
-            <span class="sp-name">${w.name}</span>
+            <span class="sp-name">${escapeHtml(w.name)}</span>
             <span class="sp-amt">+$${fmt(w.amt)}</span>
           </div>
         `).join('')}
@@ -805,7 +1103,7 @@ function showWin(res) {
     chip.className='wg-chip'+(h.won?' won':'');
     const holeHtml = document.createElement('div'); holeHtml.className='wg-hole';
     (h.hole||[]).forEach(c=>holeHtml.appendChild(mkMiniCard(c)));
-    chip.innerHTML=`<div class="wg-name">${h.won?'🏆 ':''}${h.name}</div>`;
+    chip.innerHTML=`<div class="wg-name">${h.won?'🏆 ':''}${escapeHtml(h.name)}</div>`;
     chip.appendChild(holeHtml);
     const d=document.createElement('div'); d.className='wg-descr'; d.textContent=h.hd||'';
     chip.appendChild(d);
@@ -913,3 +1211,18 @@ document.addEventListener('keydown', e => {
 
 show('lobby');
 console.log('🃏 Poker v4 — PokerNow style');
+
+// Auto pre-fill saved name and room code if available, and restore active session if on mobile
+if (isMobile()) {
+  const existingSession = getSession();
+  if (existingSession) {
+    if (existingSession.name) {
+      const cn = document.getElementById('c-name'); if (cn) cn.value = existingSession.name;
+      const jn = document.getElementById('j-name'); if (jn) jn.value = existingSession.name;
+    }
+    if (existingSession.rId) {
+      const jc = document.getElementById('j-code'); if (jc) jc.value = existingSession.rId;
+    }
+    attemptSessionRestore();
+  }
+}

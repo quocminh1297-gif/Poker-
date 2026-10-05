@@ -11,6 +11,9 @@
 </head>
 <body>
 
+<!-- ═══ NETWORK NOTIFICATION TOAST ═══ -->
+<div id="net-toast" class="net-toast hidden"></div>
+
 <!-- ═══ WINNER OVERLAY ═══ -->
 <div id="winner-overlay" class="overlay hidden">
   <div class="confetti-box" id="confetti-box"></div>
@@ -27,11 +30,17 @@
 </div>
 
 <!-- ═══ LOG OVERLAY ═══ -->
-<div id="log-overlay" class="log-overlay hidden">
+<div id="log-overlay" class="log-overlay hidden" onclick="if(event.target===this)toggleLog()">
   <div class="log-panel">
     <div class="log-hdr">
-      <span>📋 Game Log</span>
-      <button onclick="toggleLog()">✕</button>
+      <div class="log-hdr-left">
+        <span>📋 Game Log</span>
+        <span class="log-count" id="log-count">0 items</span>
+      </div>
+      <div class="log-hdr-right">
+        <input type="text" id="log-filter-inp" class="log-search-inp" placeholder="Search logs..." oninput="onLogFilter(this.value)"/>
+        <button class="log-close-btn" onclick="toggleLog()" title="Close">✕</button>
+      </div>
     </div>
     <div class="log-body" id="log-body"></div>
   </div>
@@ -112,6 +121,7 @@
       </div>
     </div>
     <div class="w-footer">
+      <button class="btn-sec btn-leave-w" onclick="leaveRoom()">🚪 Leave</button>
       <button class="btn-go" id="btn-start" onclick="startGame()">🃏 Start Game</button>
       <div id="w-err" class="err"></div>
     </div>
@@ -135,6 +145,7 @@
       <button class="tb-btn" id="tb-pause" onclick="togglePause()" style="display:none">⏸ PAUSE</button>
       <button class="tb-btn" onclick="toggleLog()">📋 LOG</button>
       <button class="tb-btn" id="tb-chat-btn" onclick="toggleChat()">💬</button>
+      <button class="tb-btn tb-leave" onclick="confirmLeaveRoom()" title="Leave Room">🚪</button>
     </div>
   </header>
 
