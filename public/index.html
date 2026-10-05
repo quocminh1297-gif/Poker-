@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/>
   <title>Texas Hold'em Poker</title>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
@@ -166,12 +166,16 @@
       <div class="my-meta">
         <div class="my-name-row" id="my-name-row"></div>
         <div class="my-hs"       id="my-hs"></div>
+        <button id="btn-rebuy" class="tb-btn rebuy-btn" style="display:none;" onclick="triggerRebuy()">
+          🔄 Rebuy Chips
+        </button>
       </div>
     </div>
 
     <!-- Timer bar — positioned near bottom-right of my cards via CSS -->
     <div class="timer-wrap" id="timer-wrap">
       <div class="timer-bar"><div class="timer-fill" id="timer-fill"></div></div>
+      <span class="timer-num" id="timer-num">30</span>
     </div>
 
     <!-- Right: Action zone -->

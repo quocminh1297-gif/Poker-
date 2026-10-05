@@ -10,16 +10,16 @@ let timerInterval = null, timerTurnStartMs = null, seatTimerInterval = null;
 const SUIT_SYM  = { s:'♠', h:'♥', d:'♦', c:'♣' };
 const SUIT_CLS  = { s:'c-s', h:'c-h', d:'c-d', c:'c-c' };
 
-/* Opponent seat positions (% of arena) by opponent count */
+/* Opponent seat positions (% of arena) by opponent count - safe inward margins */
 const OPP_POS = {
-  1:[{t:'13%', l:'50%'}],
-  2:[{t:'13%', l:'32%'},{t:'13%', l:'68%'}],
-  3:[{t:'12%', l:'24%'},{t:'11%', l:'50%'},{t:'12%', l:'76%'}],
-  4:[{t:'22%',l:'5%'},{t:'12%', l:'34%'},{t:'12%', l:'66%'},{t:'22%',l:'95%'}],
-  5:[{t:'36%',l:'2%'},{t:'14%', l:'20%'},{t:'10%', l:'50%'},{t:'14%', l:'80%'},{t:'36%',l:'98%'}],
-  6:[{t:'50%',l:'2%'},{t:'22%',l:'4%'},{t:'11%', l:'30%'},{t:'11%', l:'70%'},{t:'22%',l:'96%'},{t:'50%',l:'98%'}],
-  7:[{t:'56%',l:'2%'},{t:'28%',l:'3%'},{t:'12%', l:'17%'},{t:'10%', l:'42%'},{t:'10%', l:'62%'},{t:'12%', l:'84%'},{t:'28%',l:'97%'}],
-  8:[{t:'60%',l:'2%'},{t:'36%',l:'2%'},{t:'16%',l:'8%'}, {t:'9%', l:'30%'},{t:'9%', l:'55%'},{t:'9%', l:'75%'},{t:'16%',l:'92%'},{t:'36%',l:'98%'}],
+  1:[{t:'14%', l:'50%'}],
+  2:[{t:'14%', l:'30%'},{t:'14%', l:'70%'}],
+  3:[{t:'14%', l:'20%'},{t:'12%', l:'50%'},{t:'14%', l:'80%'}],
+  4:[{t:'24%', l:'12%'},{t:'12%', l:'36%'},{t:'12%', l:'64%'},{t:'24%', l:'88%'}],
+  5:[{t:'38%', l:'11%'},{t:'16%', l:'25%'},{t:'11%', l:'50%'},{t:'16%', l:'75%'},{t:'38%', l:'89%'}],
+  6:[{t:'48%', l:'11%'},{t:'22%', l:'13%'},{t:'12%', l:'32%'},{t:'12%', l:'68%'},{t:'22%', l:'87%'},{t:'48%', l:'89%'}],
+  7:[{t:'52%', l:'11%'},{t:'28%', l:'13%'},{t:'14%', l:'25%'},{t:'10%', l:'42%'},{t:'10%', l:'62%'},{t:'14%', l:'79%'},{t:'28%', l:'87%'}],
+  8:[{t:'56%', l:'11%'},{t:'36%', l:'11%'},{t:'18%', l:'17%'},{t:'10%', l:'34%'},{t:'10%', l:'52%'},{t:'10%', l:'70%'},{t:'18%', l:'83%'},{t:'36%', l:'89%'}],
 };
 
 socket.on('connect', () => { myId = socket.id; });
@@ -349,6 +349,11 @@ function renderMyArea(st, me) {
      <span class="my-chips-val">$${fmt(me.chips)}</span>
      ${me.bet>0?`<span class="my-bet-val">bet $${fmt(me.bet)}</span>`:''}
      ${me.wins>0?`<span class="my-wins">🏆×${me.wins}</span>`:''}`;
+
+  const rebuyBtn = document.getElementById('btn-rebuy');
+  if (rebuyBtn) {
+    rebuyBtn.style.display = (me && me.chips === 0) ? 'inline-flex' : 'none';
+  }
 }
 
 function nxtI(st, from) {
@@ -411,10 +416,16 @@ function renderActions(st, me) {
     if (checkBtn) { checkBtn.style.display = ''; checkBtn.disabled = false; }
   }
 
+  const effMin = Math.min(minR, maxR);
   const ri=document.getElementById('r-input'), rs=document.getElementById('r-slider');
-  ri.min=minR; ri.max=maxR; rs.min=minR; rs.max=maxR;
-  if (!ri.value||+ri.value<minR) ri.value=minR;
-  rs.value=ri.value;
+  ri.min=effMin; ri.max=Math.max(effMin, maxR);
+  rs.min=effMin; rs.max=Math.max(effMin, maxR);
+  const curVal = +ri.value || effMin;
+  const clampedVal = Math.min(maxR, Math.max(effMin, curVal));
+  ri.value = clampedVal;
+  rs.value = clampedVal;
+  updateSliderPercent(rs);
+  updateRaiseBetDisplay();
 
   if (me.folded||me.allIn) {
     allBtns.forEach(id=>{ const b=document.getElementById(id); if(b)b.disabled=true; });
@@ -429,17 +440,24 @@ function toggleRaise() { raiseOpen ? closeRaise() : openRaise(); }
 function openRaise()  {
   raiseOpen=true;
   document.getElementById('raise-panel').classList.add('open');
-  /* raise panel is position:fixed, no need to hide act-row */
-  /* Set initial min value if blank */
+  /* Set initial min value if blank or out of range */
   const ri = document.getElementById('r-input');
   if (ri && S) {
     const me   = S.players.find(p=>p.isMe);
     const minR = S.roundBet + (S.lastRaise||S.cfg.bb);
     const maxR = (me?.chips||0) + (me?.bet||0);
-    ri.min = minR; ri.max = maxR;
-    if (!ri.value || +ri.value < minR) ri.value = minR;
+    const effMin = Math.min(minR, maxR);
+    ri.min = effMin; ri.max = Math.max(effMin, maxR);
+    let initVal = +ri.value;
+    if (!initVal || initVal < effMin || initVal > maxR) initVal = effMin;
+    ri.value = initVal;
     const sl = document.getElementById('r-slider');
-    if (sl) { sl.min=minR; sl.max=maxR; sl.value=ri.value; updateSliderPercent(sl); }
+    if (sl) {
+      sl.min = effMin;
+      sl.max = Math.max(effMin, maxR);
+      sl.value = initVal;
+      updateSliderPercent(sl);
+    }
   }
   updateRaiseBetDisplay();
   setTimeout(() => { const ri=document.getElementById('r-input'); ri&&ri.focus(); }, 80);
@@ -475,9 +493,17 @@ function updateRaiseBetDisplay() {
 }
 function adjustRaise(dir) {
   if (!S) return;
+  const me = S.players.find(p=>p.isMe);
+  const minR = S.roundBet + (S.lastRaise||S.cfg.bb);
+  const maxR = (me?.chips||0) + (me?.bet||0);
+  const effMin = Math.min(minR, maxR);
   const ri=document.getElementById('r-input');
   const step = S.cfg.bb || 1000;
-  ri.value = Math.min(+ri.max, Math.max(+ri.min, (+ri.value||+ri.min) + dir*step));
+  let cur = +ri.value || effMin;
+  let next = cur + dir * step;
+  if (next < effMin) next = effMin;
+  if (next > maxR)   next = maxR;
+  ri.value = next;
   syncSlider();
 }
 
@@ -487,12 +513,28 @@ function preset(v) {
   const pot  = S.pot, rb = S.roundBet;
   const minR = rb + (S.lastRaise||S.cfg.bb);
   const maxR = (me?.chips||0) + (me?.bet||0);
-  let val = v==='min' ? minR : v==='max' ? maxR : rb + Math.floor(pot*v);
-  val = Math.max(minR, Math.min(maxR, val));
-  document.getElementById('r-input').value  = val;
+
+  let val;
+  if (v === 'min') {
+    val = Math.min(minR, maxR);
+  } else if (v === 'max') {
+    val = maxR;
+  } else {
+    const target = rb + Math.floor(pot * v);
+    if (maxR <= minR) {
+      val = maxR;
+    } else {
+      val = Math.max(minR, Math.min(maxR, target));
+    }
+  }
+
+  const ri = document.getElementById('r-input');
   const sl = document.getElementById('r-slider');
-  sl.value = val;
-  updateSliderPercent(sl);
+  if (ri) ri.value = val;
+  if (sl) {
+    sl.value = val;
+    updateSliderPercent(sl);
+  }
   updateRaiseBetDisplay();
 }
 function confirmRaise() {
@@ -503,6 +545,13 @@ function confirmRaise() {
 function act(action) {
   closeRaise();
   socket.emit('action',{action}, r=>{ if(r.err) aerr(r.err); });
+}
+function triggerRebuy() {
+  if (confirm('Rebuy starting chips to re-enter the game?')) {
+    socket.emit('rebuy', r => {
+      if (r && r.err) aerr(r.err);
+    });
+  }
 }
 function aerr(m) { const e=document.getElementById('act-err'); e.textContent=m; setTimeout(()=>e.textContent='',3500); }
 
@@ -629,10 +678,23 @@ function showWin(res) {
   document.getElementById('win-names').textContent = res.winners.map(w=>w.name).join(' & ');
   const descs = [...new Set(res.winners.map(w=>w.hd).filter(Boolean))];
   document.getElementById('win-hand').textContent  = descs.join(' · ');
-  document.getElementById('win-pot').textContent   =
-    res.winners.length===1
-      ? `+$${fmt(res.winners[0].amt)}`
-      : res.winners.map(w=>`${w.name}: +$${fmt(w.amt)}`).join('  ');
+  const winPotEl = document.getElementById('win-pot');
+  if (!res.winners || res.winners.length === 0) {
+    winPotEl.innerHTML = '';
+  } else if (res.winners.length === 1) {
+    winPotEl.innerHTML = `<span class="win-pot-single">+$${fmt(res.winners[0].amt)}</span>`;
+  } else {
+    winPotEl.innerHTML = `
+      <div class="split-pot-grid">
+        ${res.winners.map(w => `
+          <div class="split-pot-item">
+            <span class="sp-name">${w.name}</span>
+            <span class="sp-amt">+$${fmt(w.amt)}</span>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
 
   const grid = document.getElementById('win-grid');
   grid.innerHTML='';

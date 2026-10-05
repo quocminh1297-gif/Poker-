@@ -16,7 +16,8 @@ const SUITS       = ['s','h','d','c'];
 const RANKS       = ['2','3','4','5','6','7','8','9','T','J','Q','K','A'];
 const RANK_NAME   = { '2':'Two','3':'Three','4':'Four','5':'Five','6':'Six','7':'Seven',
   '8':'Eight','9':'Nine','T':'Ten','J':'Jack','Q':'Queen','K':'King','A':'Ace' };
-const TURN_SEC    = 30;
+const TURN_SEC        = 30;
+const RUNOUT_DELAY_MS = process.env.NODE_ENV === 'test' ? 20 : 1800;
 
 /* ── STATE ─────────────────────────────────────── */
 const rooms     = {};
@@ -31,6 +32,16 @@ function mkDeck() {
     [d[i], d[j]] = [d[j], d[i]];
   }
   return d;
+}
+
+/* ── CONFIG SANITIZER ─────────────────────────── */
+function sanitizeCfg(o = {}) {
+  const sb    = Math.max(1, Math.floor(Number(o.sb) || 2000));
+  const bb    = Math.max(sb + 1, Math.floor(Number(o.bb) || 4000));
+  const chips = Math.max(bb * 2, Math.floor(Number(o.chips) || 100000));
+  const ante  = Math.max(0, Math.floor(Number(o.ante) || 0));
+  const maxP  = Math.min(9, Math.max(2, Math.floor(Number(o.maxP) || 9)));
+  return { sb, bb, chips, ante, maxP };
 }
 
 /* ── HAND STRENGTH (pre-board) ─────────────────── */
@@ -52,38 +63,63 @@ function createRoom(hostId, o = {}) {
   const id = uuidv4().substring(0, 6).toUpperCase();
   rooms[id] = {
     id, hostId, status: 'waiting',
-    cfg: {
-      chips: o.chips || 100000,
-      sb:    o.sb    || 2000,
-      bb:    o.bb    || 4000,
-      ante:  o.ante  >= 0 ? (o.ante || 0) : 0,
-      maxP:  Math.min(9, Math.max(2, o.maxP || 9)),
-    },
+    cfg: sanitizeCfg(o),
     players: [], deck: [], board: [],
     pot: 0, phase: null,
     curIdx: -1, dealerIdx: 0,
     roundBet: 0, lastRaise: 0,
     msgs: [], handNum: 0, result: null,
     turnTimer: null, turnStartMs: null, paused: false,
+    nextHandTimer: null, runoutTimer: null,
+    showdownHands: false, showAllInHole: false,
   };
   return id;
 }
 
-function addPlayer(rid, sid, name) {
+function addOrReconnectPlayer(rid, sid, name, token) {
   const r = rooms[rid];
-  if (!r) return 'Room not found';
-  if (r.status === 'playing') return 'Game in progress';
-  if (r.players.length >= r.cfg.maxP) return `Room full (${r.cfg.maxP} max)`;
-  if (r.players.find(p => p.sid === sid)) return 'Already in room';
-  if (r.players.find(p => p.name === name)) return 'Name taken';
-  r.players.push({
-    sid, name, chips: r.cfg.chips,
+  if (!r) return { err: 'Room not found' };
+
+  // Try to find existing player for reconnection (by token or disconnected name)
+  let existing = null;
+  if (token) {
+    existing = r.players.find(p => p.token === token);
+  }
+  if (!existing && name) {
+    existing = r.players.find(p => p.name === name && !p.connected);
+  }
+
+  if (existing) {
+    existing.sid = sid;
+    existing.connected = true;
+    sock2room[sid] = rid;
+    return { err: null, player: existing, reconnected: true };
+  }
+
+  // New player joining
+  if (r.players.some(p => p.connected && p.name === name)) {
+    return { err: 'Name taken' };
+  }
+  if (r.players.length >= r.cfg.maxP) {
+    return { err: `Room full (${r.cfg.maxP} max)` };
+  }
+
+  const isPlaying = r.status === 'playing';
+  const playerToken = uuidv4();
+  const player = {
+    sid, token: playerToken, name,
+    chips: r.cfg.chips,
     hole: [], bet: 0, totalBet: 0,
-    folded: false, allIn: false, active: true,
+    folded: false, allIn: false,
+    active: !isPlaying,
+    connected: true,
+    waitingNextHand: isPlaying,
     acted: false, wins: 0, lastAct: null,
-  });
+  };
+
+  r.players.push(player);
   sock2room[sid] = rid;
-  return null;
+  return { err: null, player, reconnected: false };
 }
 
 /* ── FILTER STATE ──────────────────────────────── */
@@ -93,21 +129,26 @@ function filterState(room, sid) {
   if (me && me.hole.length === 2 && !me.folded && room.phase && room.phase !== 'showdown') {
     hs = handStrength(me.hole, room.board);
   }
+
   const players = room.players.map(p => {
     const isMe = p.sid === sid;
     let hole;
-    if (room.phase === 'showdown') {
-      hole = (!p.folded && p.hole.length > 0) ? p.hole : p.hole.map(() => '??');
+    if ((room.phase === 'showdown' && room.showdownHands) || (room.showAllInHole && !p.folded)) {
+      hole = (!p.folded && p.hole.length > 0) ? p.hole : (isMe ? p.hole : p.hole.map(() => '??'));
     } else {
       hole = isMe ? p.hole : p.hole.map(() => '??');
     }
     return {
       sid: p.sid, name: p.name, chips: p.chips,
       bet: p.bet, totalBet: p.totalBet,
-      folded: p.folded, allIn: p.allIn, active: p.active,
+      folded: p.folded, allIn: p.allIn,
+      active: p.active && p.connected,
+      connected: p.connected,
+      waitingNextHand: p.waitingNextHand || false,
       hole, isMe, wins: p.wins, lastAct: p.lastAct,
     };
   });
+
   return {
     id: room.id, hostId: room.hostId, status: room.status,
     cfg: room.cfg, phase: room.phase,
@@ -116,18 +157,24 @@ function filterState(room, sid) {
     roundBet: room.roundBet, lastRaise: room.lastRaise,
     handNum: room.handNum, msgs: room.msgs.slice(-100),
     hs, result: room.result,
-    turnStartMs: room.turnStartMs || null,
+    turnStartMs: (room.showAllInHole || room.phase === 'showdown') ? null : (room.turnStartMs || null),
     paused: room.paused || false,
   };
 }
 
 function broadcast(r) {
   for (const p of r.players) {
-    const s = io.sockets.sockets.get(p.sid);
-    if (s) s.emit('state', filterState(r, p.sid));
+    if (p.connected) {
+      const s = io.sockets.sockets.get(p.sid);
+      if (s) s.emit('state', filterState(r, p.sid));
+    }
   }
 }
-function msg(r, t) { r.msgs.push({ t, ts: Date.now() }); }
+
+function msg(r, t) {
+  r.msgs.push({ t, ts: Date.now() });
+  if (r.msgs.length > 100) r.msgs.shift();
+}
 
 /* ── TURN TIMER ─────────────────────────────────── */
 function startTurnTimer(r) {
@@ -135,7 +182,7 @@ function startTurnTimer(r) {
   if (!r.phase || r.phase === 'showdown') return;
   if (r.paused) return;
   const cur = r.players[r.curIdx];
-  if (!cur || cur.folded || cur.allIn || !cur.active) return;
+  if (!cur || cur.folded || cur.allIn || !cur.active || !cur.connected) return;
 
   r.turnStartMs = Date.now();
   r.turnTimer = setTimeout(() => {
@@ -143,18 +190,23 @@ function startTurnTimer(r) {
     if (r.paused) return;
     const c = r.players[r.curIdx];
     if (!c || c.folded || c.allIn) return;
+
     const toCall = r.roundBet - c.bet;
     if (toCall > 0) {
-      // Facing a bet/raise — auto fold
       msg(r, `⏱️ ${c.name} timed out — auto fold`);
       c.folded = true; c.acted = true; c.lastAct = 'FOLD';
+      refundUncalledBet(r);
     } else {
-      // No bet pending — auto check
       msg(r, `⏱️ ${c.name} timed out — auto check`);
       c.acted = true; c.lastAct = 'CHECK';
     }
+
     const ih = inHandP(r);
-    if (ih.length <= 1) { awardPot(r, ih, null); broadcast(r); return; }
+    if (ih.length <= 1) {
+      awardPot(r, ih, null);
+      broadcast(r);
+      return;
+    }
     if (bettingDone(r)) advanceStreet(r);
     else advancePlayer(r);
     broadcast(r);
@@ -166,22 +218,39 @@ function clearTurnTimer(r) {
   r.turnStartMs = null;
 }
 
+function clearRunoutTimer(r) {
+  if (r.runoutTimer) { clearTimeout(r.runoutTimer); r.runoutTimer = null; }
+}
+
 /* ── HELPERS ────────────────────────────────────── */
-const activeP = r => r.players.filter(p => p.active);
-const inHandP = r => r.players.filter(p => p.active && !p.folded);
-const canActP = r => r.players.filter(p => p.active && !p.folded && !p.allIn);
+const connectedP = r => r.players.filter(p => p.connected);
+const activeP    = r => r.players.filter(p => p.active && p.connected);
+const inHandP    = r => r.players.filter(p => p.active && p.connected && !p.folded);
+const canActP    = r => r.players.filter(p => p.active && p.connected && !p.folded && !p.allIn);
+
+function nextSeat(r, from, filterFn = p => p.active && p.connected) {
+  const n = r.players.length;
+  if (n === 0) return 0;
+  let i = (from + 1) % n, t = 0;
+  while (t++ < n) {
+    if (filterFn(r.players[i])) return i;
+    i = (i + 1) % n;
+  }
+  return from;
+}
 
 function nextAct(r, from) {
   const n = r.players.length;
+  if (n === 0) return 0;
   let i = (from + 1) % n, t = 0;
   while (t++ < n) {
     const p = r.players[i];
-    if (p.active && !p.folded && !p.allIn) return i;
+    if (p.active && p.connected && !p.folded && !p.allIn) return i;
     i = (i + 1) % n;
   }
   i = (from + 1) % n; t = 0;
   while (t++ < n) {
-    if (r.players[i].active && !r.players[i].folded) return i;
+    if (r.players[i].active && r.players[i].connected && !r.players[i].folded) return i;
     i = (i + 1) % n;
   }
   return from;
@@ -189,10 +258,11 @@ function nextAct(r, from) {
 
 function postBlind(r, idx, amt) {
   const p = r.players[idx];
+  if (!p) return 0;
   const a = Math.min(amt, p.chips);
   p.chips -= a; p.bet += a; p.totalBet += a; r.pot += a;
   if (p.chips === 0) p.allIn = true;
-  // NOT setting p.acted — that's the preflop BB bug fix
+  return a;
 }
 
 function postAnte(r, p) {
@@ -218,9 +288,32 @@ function advancePlayer(r) {
   startTurnTimer(r);
 }
 
+/* ── UNCALLED BET REFUND ────────────────────────── */
+function refundUncalledBet(r) {
+  const inHand = inHandP(r);
+  if (inHand.length <= 1) return;
+
+  const sorted = [...inHand].sort((a, b) => b.totalBet - a.totalBet);
+  const highest = sorted[0];
+  const secondHighest = sorted[1];
+
+  const uncalled = highest.totalBet - secondHighest.totalBet;
+  if (uncalled > 0) {
+    highest.chips += uncalled;
+    highest.totalBet -= uncalled;
+    highest.bet = Math.max(0, highest.bet - uncalled);
+    r.pot -= uncalled;
+    msg(r, `↩️ $${uncalled} uncalled bet returned to ${highest.name}`);
+  }
+}
+
+/* ── STREET ADVANCE ─────────────────────────────── */
 function advanceStreet(r) {
+  refundUncalledBet(r);
   for (const p of r.players) { p.bet = 0; p.acted = false; p.lastAct = null; }
   r.roundBet = 0; r.lastRaise = r.cfg.bb;
+
+  // In both Heads-Up and Multiway, first to act postflop is first in-hand to the left of dealer
   const first = nextAct(r, r.dealerIdx);
 
   switch (r.phase) {
@@ -243,64 +336,300 @@ function advanceStreet(r) {
       return;
   }
 
-  if (canActP(r).length <= 1) { runOut(r); return; }
+  if (canActP(r).length <= 1) {
+    startRunout(r);
+    return;
+  }
   r.curIdx = first;
   startTurnTimer(r);
 }
 
-function runOut(r) {
-  while (r.board.length < 5) r.board.push(r.deck.pop());
+function startRunout(r) {
+  clearTurnTimer(r);
+  clearRunoutTimer(r);
+  refundUncalledBet(r);
+  for (const p of r.players) { p.bet = 0; p.acted = false; p.lastAct = null; }
+  r.roundBet = 0;
+  r.lastRaise = r.cfg.bb;
+
+  // Reveal hole cards for active contenders in all-in showdown sweat
+  r.showAllInHole = true;
+  broadcast(r);
+
+  // If river is already dealt (5 cards), brief pause then showdown
+  if (r.board.length >= 5) {
+    r.runoutTimer = setTimeout(() => {
+      r.runoutTimer = null;
+      r.phase = 'showdown';
+      broadcast(r);
+      doShowdown(r);
+    }, RUNOUT_DELAY_MS);
+    return;
+  }
+
+  // Otherwise, deal the next street after delay
+  r.runoutTimer = setTimeout(() => {
+    r.runoutTimer = null;
+    stepRunout(r);
+  }, RUNOUT_DELAY_MS);
+}
+
+function stepRunout(r) {
+  clearRunoutTimer(r);
+  if (r.paused) return;
+  if (!rooms[r.id] || r.status !== 'playing') return;
+
+  const cont = inHandP(r);
+  if (cont.length <= 1) {
+    awardPot(r, cont, null);
+    return;
+  }
+
+  if (r.board.length < 3) {
+    // Deal Flop (3 cards)
+    r.board.push(r.deck.pop(), r.deck.pop(), r.deck.pop());
+    r.phase = 'flop';
+    msg(r, `🌊 FLOP: ${r.board.join('  ')}`);
+    broadcast(r);
+    r.runoutTimer = setTimeout(() => {
+      r.runoutTimer = null;
+      stepRunout(r);
+    }, RUNOUT_DELAY_MS);
+    return;
+  }
+
+  if (r.board.length === 3) {
+    // Deal Turn (1 card)
+    const turnCard = r.deck.pop();
+    r.board.push(turnCard);
+    r.phase = 'turn';
+    msg(r, `↩️ TURN: ${turnCard}`);
+    broadcast(r);
+    r.runoutTimer = setTimeout(() => {
+      r.runoutTimer = null;
+      stepRunout(r);
+    }, RUNOUT_DELAY_MS);
+    return;
+  }
+
+  if (r.board.length === 4) {
+    // Deal River (1 card)
+    const riverCard = r.deck.pop();
+    r.board.push(riverCard);
+    r.phase = 'river';
+    msg(r, `🏞️ RIVER: ${riverCard}`);
+    broadcast(r);
+    r.runoutTimer = setTimeout(() => {
+      r.runoutTimer = null;
+      stepRunout(r);
+    }, RUNOUT_DELAY_MS);
+    return;
+  }
+
+  // All 5 board cards dealt -> Showdown!
   r.phase = 'showdown';
   broadcast(r);
   doShowdown(r);
 }
 
+/* ── SHOWDOWN & POT DISTRIBUTION ────────────────── */
 function doShowdown(r) {
   clearTurnTimer(r);
-  msg(r, '🏆 SHOWDOWN');
   const cont = inHandP(r);
-  if (cont.length <= 1) { awardPot(r, cont, null); return; }
+  if (cont.length <= 1) {
+    awardPot(r, cont, null);
+    return;
+  }
+
+  r.showdownHands = true;
+  msg(r, '🏆 SHOWDOWN');
 
   const ev = cont.map(p => ({ player: p, hand: Hand.solve([...p.hole, ...r.board]) }));
   const desc = ev.map(e => `${e.player.name}: [${e.player.hole.join(' ')}] — ${e.hand.descr}`).join('  |  ');
   msg(r, `🃏 ${desc}`);
 
-  const best    = Hand.winners(ev.map(e => e.hand));
-  const winners = ev.filter(e => best.includes(e.hand));
-  awardPot(r, winners.map(w => w.player), ev);
+  awardPot(r, cont, ev);
 }
 
-function awardPot(r, winners, ev) {
+function distributePotShare(r, tierWinners, tierPot, winningsMap) {
+  const share = Math.floor(tierPot / tierWinners.length);
+  const rem   = tierPot - share * tierWinners.length;
+
+  for (const w of tierWinners) {
+    winningsMap.set(w, (winningsMap.get(w) || 0) + share);
+  }
+
+  if (rem > 0) {
+    // Odd chip goes to player closest to left of dealer button
+    const n = r.players.length;
+    const sorted = [...tierWinners].sort((a, b) => {
+      const idxA = r.players.indexOf(a);
+      const idxB = r.players.indexOf(b);
+      const distA = (idxA - (r.dealerIdx + 1) + n) % n;
+      const distB = (idxB - (r.dealerIdx + 1) + n) % n;
+      return distA - distB;
+    });
+
+    for (let i = 0; i < rem; i++) {
+      const lucky = sorted[i % sorted.length];
+      winningsMap.set(lucky, winningsMap.get(lucky) + 1);
+    }
+  }
+}
+
+function awardPot(r, contenders, ev) {
   clearTurnTimer(r);
-  if (!winners.length) return;
+  clearRunoutTimer(r);
+  if (!contenders || !contenders.length) return;
+
+  // CASE 1: All opponents folded (Single Winner - no showdown)
+  if (contenders.length === 1) {
+    const winner = contenders[0];
+    refundUncalledBet(r);
+    const total = r.pot;
+    winner.chips += total;
+    winner.wins = (winner.wins || 0) + 1;
+
+    r.result = {
+      winners: [{ name: winner.name, amt: total, hd: null, hole: winner.hole }],
+      allHands: null,
+      totalPot: total,
+    };
+    r.pot = 0;
+    r.phase = 'showdown';
+    r.showdownHands = false; // MUCK: Cards hidden when opponents folded!
+    msg(r, `🏆 ${winner.name} wins $${total}`);
+    broadcast(r);
+
+    scheduleNextHand(r);
+    return;
+  }
+
+  // CASE 2: Showdown with Side Pots & Split Pots
+  refundUncalledBet(r);
   const total = r.pot;
-  const share = Math.floor(total / winners.length);
-  const rem   = total - share * winners.length;
+  r.showdownHands = true;
 
-  const wr = winners.map((w, i) => {
-    const amt = share + (i === 0 ? rem : 0);
-    w.chips += amt; w.wins = (w.wins || 0) + 1;
-    return { name: w.name, amt, hd: ev?.find(e => e.player === w)?.hand.descr || null, hole: w.hole };
-  });
+  const contributors = r.players.filter(p => p.totalBet > 0).map(p => ({
+    player: p,
+    remaining: p.totalBet,
+  }));
 
-  const ah = ev ? ev.map(e => ({
-    name: e.player.name, hd: e.hand.descr,
-    hole: e.player.hole, won: winners.includes(e.player),
-  })) : null;
+  const winningsMap = new Map();
+  for (const p of contenders) winningsMap.set(p, 0);
+
+  while (contributors.some(c => c.remaining > 0)) {
+    const activeContendersWithChips = contributors.filter(c => contenders.includes(c.player) && c.remaining > 0);
+    let minBet = 0;
+    if (activeContendersWithChips.length > 0) {
+      minBet = Math.min(...activeContendersWithChips.map(c => c.remaining));
+    } else {
+      const remainingPos = contributors.filter(c => c.remaining > 0);
+      minBet = Math.min(...remainingPos.map(c => c.remaining));
+    }
+
+    if (minBet <= 0) break;
+
+    let tierPot = 0;
+    const tierEligible = [];
+    for (const c of contributors) {
+      if (c.remaining > 0) {
+        const take = Math.min(c.remaining, minBet);
+        tierPot += take;
+        c.remaining -= take;
+        if (contenders.includes(c.player)) {
+          tierEligible.push(c.player);
+        }
+      }
+    }
+
+    if (tierPot <= 0) continue;
+
+    if (tierEligible.length === 0) {
+      // Dead money from folded players: award to best overall hand
+      const allHands = ev ? contenders.map(p => ev.find(e => e.player === p)?.hand).filter(Boolean) : [];
+      let top = contenders;
+      if (allHands.length === contenders.length) {
+        try {
+          const best = Hand.winners(allHands);
+          top = contenders.filter(p => best.includes(ev.find(e => e.player === p)?.hand));
+        } catch { top = contenders; }
+      }
+      distributePotShare(r, top, tierPot, winningsMap);
+      continue;
+    }
+
+    const eligibleHands = ev ? tierEligible.map(p => ev.find(e => e.player === p)?.hand).filter(Boolean) : [];
+    let tierWinners = tierEligible;
+    if (eligibleHands.length === tierEligible.length && eligibleHands.length > 0) {
+      try {
+        const bestHands = Hand.winners(eligibleHands);
+        tierWinners = tierEligible.filter(p => bestHands.includes(ev.find(e => e.player === p)?.hand));
+      } catch { tierWinners = tierEligible; }
+    }
+
+    distributePotShare(r, tierWinners, tierPot, winningsMap);
+  }
+
+  // Fallback: If pot has remainder not covered by totalBet (e.g. manual pot injection)
+  let distributed = 0;
+  for (const amt of winningsMap.values()) distributed += amt;
+  const undistributed = total - distributed;
+  if (undistributed > 0) {
+    let top = contenders;
+    const allHands = ev ? contenders.map(p => ev.find(e => e.player === p)?.hand).filter(Boolean) : [];
+    if (allHands.length === contenders.length) {
+      try {
+        const best = Hand.winners(allHands);
+        top = contenders.filter(p => best.includes(ev.find(e => e.player === p)?.hand));
+      } catch { top = contenders; }
+    }
+    distributePotShare(r, top, undistributed, winningsMap);
+  }
+
+  const wr = [];
+  for (const [p, amt] of winningsMap.entries()) {
+    if (amt > 0) {
+      p.chips += amt;
+      p.wins = (p.wins || 0) + 1;
+      const hd = ev.find(e => e.player === p)?.hand.descr || null;
+      wr.push({ name: p.name, amt, hd, hole: p.hole });
+      msg(r, `🏆 ${p.name} wins $${amt}${hd ? ` — ${hd}` : ''}`);
+    }
+  }
+
+  const ah = ev.map(e => ({
+    name: e.player.name,
+    hd: e.hand.descr,
+    hole: e.player.hole,
+    won: (winningsMap.get(e.player) || 0) > 0,
+  }));
 
   r.result = { winners: wr, allHands: ah, totalPot: total };
-  r.pot = 0; r.phase = 'showdown';
-  for (const w of wr) msg(r, `🏆 ${w.name} wins $${w.amt}${w.hd ? ` — ${w.hd}` : ''}`);
+  r.pot = 0;
+  r.phase = 'showdown';
   broadcast(r);
 
-  setTimeout(() => { if (rooms[r.id]?.status === 'playing') startHand(r); }, 6000);
+  scheduleNextHand(r);
+}
+
+function scheduleNextHand(r) {
+  if (r.nextHandTimer) { clearTimeout(r.nextHandTimer); r.nextHandTimer = null; }
+  r.nextHandTimer = setTimeout(() => {
+    r.nextHandTimer = null;
+    if (rooms[r.id]?.status === 'playing' && !rooms[r.id]?.paused) {
+      startHand(r);
+    }
+  }, 6000);
 }
 
 /* ── GAME FLOW ───────────────────────────────────── */
 function startGame(r) {
-  if (r.players.length < 2) return 'Need ≥ 2 players';
+  if (r.players.filter(p => p.connected).length < 2) return 'Need ≥ 2 players';
   if (r.status === 'playing') return 'Already started';
-  r.status = 'playing'; r.handNum = 0; r.dealerIdx = 0;
+  r.status = 'playing';
+  r.handNum = 0;
+  r.dealerIdx = 0;
   msg(r, '🎲 Game started!');
   startHand(r);
   return null;
@@ -310,38 +639,69 @@ function startHand(r) {
   r.handNum++;
   r.deck = mkDeck(); r.board = []; r.pot = 0; r.result = null;
   r.roundBet = 0; r.lastRaise = r.cfg.bb;
+  r.showdownHands = false;
+  r.showAllInHole = false;
+  clearRunoutTimer(r);
 
   for (const p of r.players) {
     p.hole = []; p.bet = 0; p.totalBet = 0;
     p.folded = false; p.allIn = false; p.acted = false; p.lastAct = null;
-    p.active = p.chips > 0;
+    if (p.waitingNextHand && p.chips > 0) {
+      p.waitingNextHand = false;
+      p.active = true;
+    } else {
+      p.active = p.chips > 0 && p.connected;
+    }
   }
 
   const act = activeP(r);
   if (act.length < 2) {
-    r.status = 'waiting'; msg(r, '⚠️ Not enough players with chips.');
-    broadcast(r); return;
+    r.status = 'waiting';
+    msg(r, '⚠️ Not enough players with chips.');
+    broadcast(r);
+    return;
   }
 
-  r.dealerIdx = nextAct(r, r.dealerIdx);
+  // Dealer rotation: Hand #1 keeps initial dealer; subsequent hands advance clockwise
+  if (r.handNum > 1) {
+    r.dealerIdx = nextSeat(r, r.dealerIdx);
+  } else {
+    if (!r.players[r.dealerIdx]?.active) {
+      r.dealerIdx = nextSeat(r, r.dealerIdx);
+    }
+  }
 
+  // Deal hole cards to active players
+  for (const p of act) p.hole = [r.deck.pop(), r.deck.pop()];
+
+  // Antes
   if (r.cfg.ante > 0) {
     let tot = 0;
     for (const p of act) tot += postAnte(r, p);
     if (tot) msg(r, `💰 Antes: $${r.cfg.ante} × ${act.length} = $${tot}`);
   }
 
-  for (const p of act) p.hole = [r.deck.pop(), r.deck.pop()];
+  // Blinds calculation
+  let sbI, bbI;
+  if (act.length === 2) {
+    // HEADS-UP RULES:
+    // Dealer is Small Blind! Other player is Big Blind.
+    sbI = r.dealerIdx;
+    bbI = nextSeat(r, sbI);
+    r.curIdx = sbI; // Dealer (SB) acts first preflop in Heads-Up!
+  } else {
+    // MULTIWAY (3+ players):
+    sbI = nextSeat(r, r.dealerIdx);
+    bbI = nextSeat(r, sbI);
+    r.curIdx = nextAct(r, bbI); // Under the gun acts first preflop!
+  }
 
-  const sbI = nextAct(r, r.dealerIdx);
-  const bbI = nextAct(r, sbI);
   postBlind(r, sbI, r.cfg.sb);
   postBlind(r, bbI, r.cfg.bb);
-  r.roundBet = r.cfg.bb; r.lastRaise = r.cfg.bb;
+  r.roundBet = Math.max(r.cfg.bb, r.players[bbI].bet);
+  r.lastRaise = r.cfg.bb;
 
-  r.curIdx = nextAct(r, bbI);
-  r.phase  = 'preflop';
-
+  r.phase = 'preflop';
   msg(r, `🃏 Hand #${r.handNum} — Dealer: ${r.players[r.dealerIdx].name}`);
   msg(r, `Blinds: ${r.players[sbI].name} (SB $${r.cfg.sb}) / ${r.players[bbI].name} (BB $${r.cfg.bb})`);
 
@@ -350,6 +710,8 @@ function startHand(r) {
 }
 
 function doAction(r, sid, action, amount) {
+  if (r.paused) return 'Game is paused';
+  if (r.showAllInHole) return 'All-in runout in progress';
   if (!r.phase || r.phase === 'showdown') return 'No active hand';
   const cur = r.players[r.curIdx];
   if (!cur || cur.sid !== sid) return 'Not your turn';
@@ -361,6 +723,7 @@ function doAction(r, sid, action, amount) {
     case 'fold':
       cur.folded = true; cur.acted = true; cur.lastAct = 'FOLD';
       msg(r, `❌ ${cur.name} folds`);
+      refundUncalledBet(r);
       break;
 
     case 'check':
@@ -374,28 +737,51 @@ function doAction(r, sid, action, amount) {
       const a = Math.min(toCall, cur.chips);
       cur.chips -= a; cur.bet += a; cur.totalBet += a; r.pot += a;
       cur.acted = true;
-      if (cur.chips === 0) { cur.allIn = true; cur.lastAct = 'ALL IN'; msg(r, `💥 ${cur.name} calls $${a} ALL IN`); }
-      else                 { cur.lastAct = 'CALL'; msg(r, `📞 ${cur.name} calls $${a}`); }
+      if (cur.chips === 0) {
+        cur.allIn = true; cur.lastAct = 'ALL IN';
+        msg(r, `💥 ${cur.name} calls $${a} ALL IN`);
+      } else {
+        cur.lastAct = 'CALL'; msg(r, `📞 ${cur.name} calls $${a}`);
+      }
       break;
     }
 
     case 'raise': {
-      const tot = Number(amount);
-      if (!tot || isNaN(tot)) return 'Invalid amount';
-      const minR   = r.roundBet + r.lastRaise;
-      const maxT   = cur.chips + cur.bet;
-      const goAI   = tot >= maxT;
-      const eff    = goAI ? maxT : tot;
+      const opponentsWithChips = r.players.filter(p => p !== cur && p.active && p.connected && !p.folded && p.chips > 0);
+      if (opponentsWithChips.length === 0) return 'Cannot raise — all opponents are all-in';
+
+      const tot = Math.floor(Number(amount));
+      if (!Number.isFinite(tot) || isNaN(tot) || tot <= 0) return 'Invalid amount';
+
+      const minR = r.roundBet + r.lastRaise;
+      const maxT = cur.chips + cur.bet;
+      const goAI = tot >= maxT;
+      const eff  = goAI ? maxT : tot;
+
       if (!goAI && eff < minR) return `Min raise to $${minR}`;
       if (eff <= r.roundBet) return 'Must exceed current bet';
       const add = eff - cur.bet;
       if (add > cur.chips) return 'Not enough chips';
-      r.lastRaise = eff - r.roundBet;
+
+      const isFullRaise = (eff - r.roundBet) >= r.lastRaise;
+      if (isFullRaise) {
+        r.lastRaise = eff - r.roundBet;
+        for (const p of r.players) {
+          if (p !== cur && p.active && p.connected && !p.folded && !p.allIn) {
+            p.acted = false;
+          }
+        }
+      }
+
       cur.chips -= add; cur.bet += add; cur.totalBet += add; r.pot += add; r.roundBet = eff;
-      for (const p of r.players) if (p !== cur && p.active && !p.folded && !p.allIn) p.acted = false;
       cur.acted = true;
-      if (cur.chips === 0) { cur.allIn = true; cur.lastAct = 'ALL IN'; msg(r, `💥 ${cur.name} raises to $${eff} ALL IN`); }
-      else                 { cur.lastAct = `RAISE $${eff}`; msg(r, `⬆️ ${cur.name} raises to $${eff}`); }
+
+      if (cur.chips === 0) {
+        cur.allIn = true; cur.lastAct = 'ALL IN';
+        msg(r, `💥 ${cur.name} raises to $${eff} ALL IN`);
+      } else {
+        cur.lastAct = `RAISE $${eff}`; msg(r, `⬆️ ${cur.name} raises to $${eff}`);
+      }
       break;
     }
 
@@ -403,10 +789,20 @@ function doAction(r, sid, action, amount) {
       const chips = cur.chips;
       if (chips <= 0) return 'No chips';
       const newTot = cur.bet + chips;
+
       if (newTot > r.roundBet) {
-        r.lastRaise = newTot - r.roundBet; r.roundBet = newTot;
-        for (const p of r.players) if (p !== cur && p.active && !p.folded && !p.allIn) p.acted = false;
+        const isFullRaise = (newTot - r.roundBet) >= r.lastRaise;
+        if (isFullRaise) {
+          r.lastRaise = newTot - r.roundBet;
+          for (const p of r.players) {
+            if (p !== cur && p.active && p.connected && !p.folded && !p.allIn) {
+              p.acted = false;
+            }
+          }
+        }
+        r.roundBet = newTot;
       }
+
       cur.bet += chips; cur.totalBet += chips; r.pot += chips; cur.chips = 0;
       cur.allIn = true; cur.acted = true; cur.lastAct = 'ALL IN';
       msg(r, `💥 ${cur.name} ALL IN $${chips}`);
@@ -416,16 +812,75 @@ function doAction(r, sid, action, amount) {
     default: return 'Unknown action';
   }
 
-  // Clear timer — player acted
   clearTurnTimer(r);
 
   const ih = inHandP(r);
-  if (ih.length <= 1) { awardPot(r, ih, null); broadcast(r); return null; }
+  if (ih.length <= 1) {
+    awardPot(r, ih, null);
+    broadcast(r);
+    return null;
+  }
+
   if (bettingDone(r)) advanceStreet(r);
   else advancePlayer(r);
 
   broadcast(r);
   return null;
+}
+
+function handleDisconnect(sid) {
+  const rid = sock2room[sid];
+  delete sock2room[sid];
+  const r = rid && rooms[rid];
+  if (!r) return;
+  const p = r.players.find(pl => pl.sid === sid);
+  if (!p) return;
+
+  msg(r, `⚠️ ${p.name} disconnected`);
+  p.connected = false;
+
+  if (r.status === 'playing' && r.phase && r.phase !== 'showdown') {
+    p.folded = true;
+    refundUncalledBet(r);
+
+    const ih = inHandP(r);
+    if (ih.length <= 1) {
+      clearTurnTimer(r);
+      clearRunoutTimer(r);
+      awardPot(r, ih, null);
+      broadcast(r);
+    } else {
+      const isCur = r.players[r.curIdx]?.sid === sid;
+      if (isCur) {
+        clearTurnTimer(r);
+        if (bettingDone(r)) advanceStreet(r);
+        else advancePlayer(r);
+      } else if (bettingDone(r)) {
+        clearTurnTimer(r);
+        advanceStreet(r);
+      }
+      broadcast(r);
+    }
+  } else {
+    broadcast(r);
+  }
+
+  if (r.hostId === sid) {
+    const rem = r.players.filter(pl => pl.connected);
+    if (rem.length) {
+      r.hostId = rem[0].sid;
+      msg(r, `👑 ${rem[0].name} is now host`);
+    }
+  }
+
+  if (!r.players.some(pl => pl.connected)) {
+    clearTurnTimer(r);
+    clearRunoutTimer(r);
+    if (r.nextHandTimer) { clearTimeout(r.nextHandTimer); r.nextHandTimer = null; }
+    delete rooms[r.id];
+  } else {
+    broadcast(r);
+  }
 }
 
 /* ── SOCKET.IO ──────────────────────────────────── */
@@ -435,24 +890,28 @@ io.on('connection', socket => {
   socket.on('create_room', (d, cb) => {
     if (!d.name?.trim()) return cb({ err: 'Name required' });
     const id  = createRoom(socket.id, { chips: d.chips, sb: d.sb, bb: d.bb, ante: d.ante, maxP: d.maxP });
-    const err = addPlayer(id, socket.id, d.name.trim());
-    if (err) return cb({ err });
+    const res = addOrReconnectPlayer(id, socket.id, d.name.trim(), d.token);
+    if (res.err) return cb({ err: res.err });
     socket.join(id);
-    msg(rooms[id], `👑 ${d.name} created the room`);
+    msg(rooms[id], `👑 ${d.name.trim()} created the room`);
     broadcast(rooms[id]);
-    cb({ ok: true, id });
+    cb({ ok: true, id, token: res.player.token });
   });
 
   socket.on('join_room', (d, cb) => {
     if (!d.name?.trim()) return cb({ err: 'Name required' });
     const id = d.id?.toUpperCase();
     if (!rooms[id]) return cb({ err: 'Room not found' });
-    const err = addPlayer(id, socket.id, d.name.trim());
-    if (err) return cb({ err });
+    const res = addOrReconnectPlayer(id, socket.id, d.name.trim(), d.token);
+    if (res.err) return cb({ err: res.err });
     socket.join(id);
-    msg(rooms[id], `🚪 ${d.name} joined`);
+    if (res.reconnected) {
+      msg(rooms[id], `🔄 ${d.name.trim()} reconnected`);
+    } else {
+      msg(rooms[id], `🚪 ${d.name.trim()} joined${res.player.waitingNextHand ? ' (waiting for next hand)' : ''}`);
+    }
     broadcast(rooms[id]);
-    cb({ ok: true, id });
+    cb({ ok: true, id, token: res.player.token, reconnected: res.reconnected });
   });
 
   socket.on('start_game', cb => {
@@ -477,12 +936,26 @@ io.on('connection', socket => {
     if (!r) return cb({ err: 'Not in room' });
     if (r.hostId !== socket.id) return cb({ err: 'Host only' });
     if (r.status === 'playing') return cb({ err: 'Cannot change during game' });
-    if (d.chips > 0)  { r.cfg.chips = d.chips; r.players.forEach(p => p.chips = d.chips); }
-    if (d.sb > 0)      r.cfg.sb  = d.sb;
-    if (d.bb > 0)      r.cfg.bb  = d.bb;
-    if (d.ante >= 0)   r.cfg.ante = d.ante;
-    if (d.maxP >= 2)   r.cfg.maxP = Math.min(9, d.maxP);
-    msg(r, '⚙️ Settings updated'); broadcast(r); cb({ ok: true });
+    const cfg = sanitizeCfg(d);
+    r.cfg = cfg;
+    if (d.chips > 0) r.players.forEach(p => { p.chips = cfg.chips; p.active = true; });
+    msg(r, '⚙️ Settings updated');
+    broadcast(r);
+    cb({ ok: true });
+  });
+
+  socket.on('rebuy', cb => {
+    const rid = sock2room[socket.id], r = rid && rooms[rid];
+    if (!r) return cb({ err: 'Not in room' });
+    const p = r.players.find(p => p.sid === socket.id);
+    if (!p) return cb({ err: 'Player not found' });
+    if (p.chips > 0) return cb({ err: 'Still have chips' });
+    p.chips = r.cfg.chips;
+    p.waitingNextHand = true;
+    p.active = false;
+    msg(r, `💵 ${p.name} rebuys $${r.cfg.chips} (enters next hand)`);
+    broadcast(r);
+    cb({ ok: true });
   });
 
   socket.on('pause_game', cb => {
@@ -493,10 +966,15 @@ io.on('connection', socket => {
     r.paused = !r.paused;
     if (r.paused) {
       clearTurnTimer(r);
+      clearRunoutTimer(r);
       msg(r, `⏸️ Game paused by host`);
     } else {
-      startTurnTimer(r);
       msg(r, `▶️ Game resumed by host`);
+      if (r.showAllInHole && inHandP(r).length >= 2 && canActP(r).length <= 1) {
+        stepRunout(r);
+      } else {
+        startTurnTimer(r);
+      }
     }
     broadcast(r);
     cb({ ok: true, paused: r.paused });
@@ -513,32 +991,7 @@ io.on('connection', socket => {
 
   socket.on('disconnect', () => {
     console.log(`[-] ${socket.id}`);
-    const rid = sock2room[socket.id];
-    delete sock2room[socket.id];
-    const r = rid && rooms[rid];
-    if (!r) return;
-    const p = r.players.find(p => p.sid === socket.id);
-    if (!p) return;
-    msg(r, `⚠️ ${p.name} disconnected`);
-    p.folded = true; p.active = false;
-
-    if (r.status === 'playing' && r.phase && r.phase !== 'showdown') {
-      const isCur = r.players[r.curIdx]?.sid === socket.id;
-      if (isCur) {
-        clearTurnTimer(r);
-        const ih = inHandP(r);
-        if (ih.length <= 1) { awardPot(r, ih, null); }
-        else if (bettingDone(r)) { advanceStreet(r); broadcast(r); }
-        else { advancePlayer(r); broadcast(r); }
-      } else broadcast(r);
-    }
-
-    if (r.hostId === socket.id) {
-      const rem = r.players.filter(p => p.active);
-      if (rem.length) { r.hostId = rem[0].sid; msg(r, `👑 ${rem[0].name} is now host`); }
-    }
-    if (!r.players.some(p => p.active)) { clearTurnTimer(r); delete rooms[r.id]; }
-    else broadcast(r);
+    handleDisconnect(socket.id);
   });
 });
 
