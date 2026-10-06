@@ -149,15 +149,15 @@ function attemptSessionRestore() {
   });
 }
 
-function confirmLeaveRoom() {
-  if (confirm('Bạn có chắc muốn rời khỏi phòng chơi này không?')) {
-    clearSession();
-    location.reload();
-  }
-}
 function leaveRoom() {
   clearSession();
-  location.reload();
+  let done = false;
+  const go = () => { if (!done) { done = true; location.reload(); } };
+  socket.emit('leave_room', go);
+  setTimeout(go, 800);
+}
+function confirmLeaveRoom() {
+  if (confirm('Bạn có chắc muốn rời khỏi phòng chơi này không?')) leaveRoom();
 }
 
 socket.on('connect', () => {

@@ -129,6 +129,7 @@ function addOrReconnectPlayer(rid, sid, name, token, isMobile = false) {
     }
     existing.sid = sid;
     existing.connected = true;
+    existing.left = false;
     existing.isMobile = !!isMobile;
     sock2room[sid] = rid;
     if (r.hostId === oldSid) {
@@ -1012,9 +1013,9 @@ function handleDisconnect(sid) {
   // If in an active hand
   if (r.status === 'playing' && r.phase && r.phase !== 'showdown' && !p.folded && !p.allIn) {
     // Only mobile users get a disconnect grace period for app-switching. Desktop disconnects fold immediately.
-    const graceMs = p.isMobile ? DISCONNECT_GRACE_MS() : 0;
+    const graceMs = (p.isMobile && !p.left) ? DISCONNECT_GRACE_MS() : 0;
     if (graceMs === 0) {
-      msg(r, `⚠️ ${p.name} disconnected`);
+      msg(r, `⚠️ ${p.name} ${p.left ? 'left the game' : 'disconnected'}`);
       p.folded = true;
 
       const ih = inHandP(r);
@@ -1078,6 +1079,13 @@ io.on('connection', socket => {
   const on = (ev, fn) => safeOn(socket, allow, ev, fn);
 
   on('create_room', (d, cb) => {
+    const curRid = sock2room[socket.id];
+    if (curRid && rooms[curRid]) {
+      const mine = rooms[curRid].players.find(p => p.sid === socket.id && !p.left);
+      if (mine && !(isStr(d.token, 64) && d.token === mine.token)) {
+        return cb({ err: 'Bạn đang ở trong một phòng — hãy rời phòng trước' });
+      }
+    }
     const cleanName = sanitizeName(d.name);
     if (!cleanName) return cb({ err: 'Name required (1-16 characters)' });
     const id  = createRoom(socket.id, { chips: d.chips, sb: d.sb, bb: d.bb, ante: d.ante, maxP: d.maxP });
@@ -1091,6 +1099,13 @@ io.on('connection', socket => {
   });
 
   on('join_room', (d, cb) => {
+    const curRid = sock2room[socket.id];
+    if (curRid && rooms[curRid]) {
+      const mine = rooms[curRid].players.find(p => p.sid === socket.id && !p.left);
+      if (mine && !(isStr(d.token, 64) && d.token === mine.token)) {
+        return cb({ err: 'Bạn đang ở trong một phòng — hãy rời phòng trước' });
+      }
+    }
     const cleanName = sanitizeName(d.name);
     if (!cleanName) return cb({ err: 'Name required (1-16 characters)' });
     if (!isStr(d.id, 12)) return cb({ err: 'Room not found' });
@@ -1105,6 +1120,27 @@ io.on('connection', socket => {
     }
     broadcast(rooms[id]);
     cb({ ok: true, id, token: res.player.token, reconnected: res.reconnected });
+  });
+
+  on('leave_room', (_d, cb) => {
+    const rid = sock2room[socket.id], r = rid && rooms[rid];
+    if (!r) return cb({ ok: true });
+    const p = r.players.find(pl => pl.sid === socket.id);
+    if (p) {
+      p.left = true;
+      handleDisconnect(socket.id);
+      if (r.status === 'waiting') {
+        r.players = r.players.filter(x => x !== p);
+        if (r.players.length === 0) {
+          destroyRoom(r.id);
+        } else {
+          broadcast(r);
+        }
+      }
+    }
+    socket.leave(rid);
+    delete sock2room[socket.id];
+    cb({ ok: true });
   });
 
   on('start_game', (_d, cb) => {
