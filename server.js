@@ -255,7 +255,7 @@ function startTurnTimer(r) {
   if (!r.phase || r.phase === 'showdown') return;
   if (r.paused) return;
   const cur = r.players[r.curIdx];
-  if (!cur || cur.folded || cur.allIn || !cur.active || !cur.connected) return;
+  if (!cur || cur.folded || cur.allIn || !cur.active) return;
 
   r.turnStartMs = Date.now();
   r.turnTimer = setTimeout(guard(() => {
@@ -297,8 +297,8 @@ function clearRunoutTimer(r) {
 /* ── HELPERS ────────────────────────────────────── */
 const connectedP = r => r.players.filter(p => p.connected);
 const activeP    = r => r.players.filter(p => p.active && p.connected);
-const inHandP    = r => r.players.filter(p => p.active && p.connected && !p.folded);
-const canActP    = r => r.players.filter(p => p.active && p.connected && !p.folded && !p.allIn);
+const inHandP    = r => r.players.filter(p => p.active && !p.folded);
+const canActP    = r => r.players.filter(p => p.active && !p.folded && !p.allIn);
 
 function nextSeat(r, from, filterFn = p => p.active && p.connected) {
   const n = r.players.length;
@@ -314,16 +314,13 @@ function nextSeat(r, from, filterFn = p => p.active && p.connected) {
 function nextAct(r, from) {
   const n = r.players.length;
   if (n === 0) return 0;
-  let i = (from + 1) % n, t = 0;
-  while (t++ < n) {
-    const p = r.players[i];
-    if (p.active && p.connected && !p.folded && !p.allIn) return i;
-    i = (i + 1) % n;
+  for (let k = 1; k <= n; k++) {
+    const i = (from + k) % n, p = r.players[i];
+    if (p.active && !p.folded && !p.allIn) return i;
   }
-  i = (from + 1) % n; t = 0;
-  while (t++ < n) {
-    if (r.players[i].active && r.players[i].connected && !r.players[i].folded) return i;
-    i = (i + 1) % n;
+  for (let k = 1; k <= n; k++) {
+    const i = (from + k) % n, p = r.players[i];
+    if (p.active && !p.folded) return i;
   }
   return from;
 }
@@ -564,7 +561,14 @@ function distributePotShare(r, tierWinners, tierPot, winningsMap) {
 function awardPot(r, contenders, ev) {
   clearTurnTimer(r);
   clearRunoutTimer(r);
-  if (!contenders || !contenders.length) return;
+  if (!contenders || contenders.length === 0) {
+    for (const p of r.players) { p.chips += p.totalBet; p.totalBet = 0; p.bet = 0; }
+    r.pot = 0; r.phase = 'showdown'; r.showdownHands = false;
+    r.result = { winners: [], allHands: null, totalPot: 0 };
+    msg(r, '⚠️ Không còn người chơi hợp lệ — hoàn lại tiền cược');
+    broadcast(r); scheduleNextHand(r);
+    return;
+  }
 
   // CASE 1: All opponents folded (Single Winner - no showdown)
   if (contenders.length === 1) {
@@ -676,18 +680,18 @@ function awardPot(r, contenders, ev) {
     if (amt > 0) {
       p.chips += amt;
       p.wins = (p.wins || 0) + 1;
-      const hd = ev.find(e => e.player === p)?.hand.descr || null;
+      const hd = ev?.find(e => e.player === p)?.hand.descr || null;
       wr.push({ name: p.name, amt, hd, hole: p.hole });
       msg(r, `🏆 ${p.name} wins $${amt}${hd ? ` with ${hd}` : ''} [ ${fmtCards(p.hole)} ]`);
     }
   }
 
-  const ah = ev.map(e => ({
+  const ah = ev ? ev.map(e => ({
     name: e.player.name,
     hd: e.hand.descr,
     hole: e.player.hole,
     won: (winningsMap.get(e.player) || 0) > 0,
-  }));
+  })) : [];
 
   r.result = { winners: wr, allHands: ah, totalPot: total };
   r.pot = 0;
@@ -831,7 +835,7 @@ function doAction(r, sid, action, amount) {
     }
 
     case 'raise': {
-      const opponentsWithChips = r.players.filter(p => p !== cur && p.active && p.connected && !p.folded && p.chips > 0);
+      const opponentsWithChips = r.players.filter(p => p !== cur && p.active && !p.folded && p.chips > 0);
       if (opponentsWithChips.length === 0) return 'Cannot raise — all opponents are all-in';
 
       // Enforce incomplete raise rule: action not reopened for players who already acted
@@ -854,7 +858,7 @@ function doAction(r, sid, action, amount) {
       if (isFullRaise) {
         r.lastRaise = eff - r.roundBet;
         for (const p of r.players) {
-          if (p !== cur && p.active && p.connected && !p.folded && !p.allIn) {
+          if (p !== cur && p.active && !p.folded && !p.allIn) {
             p.acted = false;
             p.canRaise = true; // Reopen action for other players
           }
@@ -862,7 +866,7 @@ function doAction(r, sid, action, amount) {
       } else {
         // Incomplete raise: players who must call need to act, but canRaise is NOT reopened
         for (const p of r.players) {
-          if (p !== cur && p.active && p.connected && !p.folded && !p.allIn) {
+          if (p !== cur && p.active && !p.folded && !p.allIn) {
             if (p.bet < eff) {
               p.acted = false;
             }
@@ -893,7 +897,7 @@ function doAction(r, sid, action, amount) {
         if (isFullRaise) {
           r.lastRaise = newTot - r.roundBet;
           for (const p of r.players) {
-            if (p !== cur && p.active && p.connected && !p.folded && !p.allIn) {
+            if (p !== cur && p.active && !p.folded && !p.allIn) {
               p.acted = false;
               p.canRaise = true;
             }
@@ -901,7 +905,7 @@ function doAction(r, sid, action, amount) {
         } else {
           // Incomplete raise: require players behind with lower bet to act
           for (const p of r.players) {
-            if (p !== cur && p.active && p.connected && !p.folded && !p.allIn) {
+            if (p !== cur && p.active && !p.folded && !p.allIn) {
               if (p.bet < newTot) {
                 p.acted = false;
               }
