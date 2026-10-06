@@ -1,7 +1,6 @@
 const express = require('express');
 const http    = require('http');
 const { Server } = require('socket.io');
-const { v4: uuidv4 } = require('uuid');
 const { randomInt, randomUUID, randomBytes } = require('crypto');
 const { Hand } = require('pokersolver');
 const path = require('path');
@@ -353,7 +352,6 @@ function clearRunoutTimer(r) {
 }
 
 /* ── HELPERS ────────────────────────────────────── */
-const connectedP = r => r.players.filter(p => p.connected);
 const activeP    = r => r.players.filter(p => p.active && p.connected);
 const inHandP    = r => r.players.filter(p => p.active && !p.folded);
 const canActP    = r => r.players.filter(p => p.active && !p.folded && !p.allIn);

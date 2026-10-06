@@ -1506,7 +1506,6 @@ input[type=range]::-webkit-slider-thumb {
   color: var(--txt2);
 }
 
-/* LOG OVERLAY */
 /* NETWORK TOAST */
 .net-toast {
   position: fixed;

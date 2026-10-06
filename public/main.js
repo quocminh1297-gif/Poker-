@@ -2,7 +2,7 @@
    TEXAS HOLD'EM — Client v4   (PokerNow style)
 ══════════════════════════════════════════════════ */
 const socket = io();
-let myId = null, roomId = null, S = null;
+let roomId = null, S = null;
 let raiseOpen = false, overlayOn = false, logOpen = false, chatOpen = false;
 let prevBoardLen = 0;
 let timerRafId = null;
@@ -161,7 +161,6 @@ function confirmLeaveRoom() {
 }
 
 socket.on('connect', () => {
-  myId = socket.id;
   hideNetToast();
   attemptSessionRestore();
 });
@@ -948,13 +947,12 @@ function createLogDiv(m) {
   const isHandHdr  = t.includes('Hand #');
   const isStreet   = t.includes('FLOP') || t.includes('TURN') || t.includes('RIVER');
   const isShowdown = t.includes('SHOWDOWN');
-  const isShowCard = t.startsWith('🎴');
   const isWin      = t.includes('wins') || t.startsWith('🏆');
   const isRaise    = t.includes('raises') || t.includes('ALL IN');
   const isCall     = t.includes('calls');
   const isCheck    = t.includes('checks');
   const isFold     = t.includes('folds');
-  const isSys      = t.startsWith('🔄') || t.startsWith('⚠️') || t.startsWith('🚪') || t.startsWith('👑') || t.startsWith('⏱️');
+  const isSys      = t.startsWith('⚠️') || t.startsWith('🚪') || t.startsWith('👑') || t.startsWith('⏱️');
   const isChat     = t.startsWith('💬');
 
   let cls = '';
@@ -962,7 +960,6 @@ function createLogDiv(m) {
   else if (isHandHdr) cls = 'le-hand-hdr';
   else if (isStreet) cls = 'le-street';
   else if (isShowdown) cls = 'le-showdown';
-  else if (isShowCard) cls = 'le-showdown-cards';
   else if (isRaise) cls = 'le-raise';
   else if (isCall) cls = 'le-call';
   else if (isCheck) cls = 'le-check';
