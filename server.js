@@ -440,34 +440,43 @@ function refundUncalledBet(r) {
   }
 }
 
-/* ── STREET ADVANCE ─────────────────────────────── */
-function advanceStreet(r) {
+/* ── STREET ADVANCE & RUNOUT ────────────────────── */
+function resetStreet(r) {
   refundUncalledBet(r);
   for (const p of r.players) { p.bet = 0; p.acted = false; p.canRaise = true; p.lastAct = null; }
-  r.roundBet = 0; r.lastRaise = r.cfg.bb;
+  r.roundBet = 0;
+  r.lastRaise = r.cfg.bb;
+}
 
-  // In both Heads-Up and Multiway, first to act postflop is first in-hand to the left of dealer
+function dealNextStreet(r) {
+  if (r.board.length < 3) {
+    r.board.push(r.deck.pop(), r.deck.pop(), r.deck.pop());
+    r.phase = 'flop';
+    msg(r, `🌊 FLOP: [ ${fmtCards(r.board)} ] — Pot: $${r.pot}`);
+  } else if (r.board.length === 3) {
+    const turnCard = r.deck.pop();
+    r.board.push(turnCard);
+    r.phase = 'turn';
+    msg(r, `↩️ TURN: [ ${fmtCard(turnCard)} ] — Board: [ ${fmtCards(r.board)} ] — Pot: $${r.pot}`);
+  } else if (r.board.length === 4) {
+    const riverCard = r.deck.pop();
+    r.board.push(riverCard);
+    r.phase = 'river';
+    msg(r, `🏞️ RIVER: [ ${fmtCard(riverCard)} ] — Board: [ ${fmtCards(r.board)} ] — Pot: $${r.pot}`);
+  }
+}
+
+function advanceStreet(r) {
+  resetStreet(r);
   const first = nextAct(r, r.dealerIdx);
 
-  switch (r.phase) {
-    case 'preflop':
-      r.board.push(r.deck.pop(), r.deck.pop(), r.deck.pop());
-      r.phase = 'flop';
-      msg(r, `🌊 FLOP: [ ${fmtCards(r.board)} ] — Pot: $${r.pot}`);
-      break;
-    case 'flop':
-      r.board.push(r.deck.pop()); r.phase = 'turn';
-      msg(r, `↩️ TURN: [ ${fmtCard(r.board[3])} ] — Board: [ ${fmtCards(r.board)} ] — Pot: $${r.pot}`);
-      break;
-    case 'turn':
-      r.board.push(r.deck.pop()); r.phase = 'river';
-      msg(r, `🏞️ RIVER: [ ${fmtCard(r.board[4])} ] — Board: [ ${fmtCards(r.board)} ] — Pot: $${r.pot}`);
-      break;
-    case 'river':
-      r.phase = 'showdown';
-      doShowdown(r);
-      return;
+  if (r.phase === 'river' || r.board.length >= 5) {
+    r.phase = 'showdown';
+    doShowdown(r);
+    return;
   }
+
+  dealNextStreet(r);
 
   if (canActP(r).length <= 1) {
     startRunout(r);
@@ -480,10 +489,7 @@ function advanceStreet(r) {
 function startRunout(r) {
   clearTurnTimer(r);
   clearRunoutTimer(r);
-  refundUncalledBet(r);
-  for (const p of r.players) { p.bet = 0; p.acted = false; p.canRaise = true; p.lastAct = null; }
-  r.roundBet = 0;
-  r.lastRaise = r.cfg.bb;
+  resetStreet(r);
 
   // Reveal hole cards for active contenders in all-in showdown sweat
   r.showAllInHole = true;
@@ -518,39 +524,8 @@ function stepRunout(r) {
     return;
   }
 
-  if (r.board.length < 3) {
-    // Deal Flop (3 cards)
-    r.board.push(r.deck.pop(), r.deck.pop(), r.deck.pop());
-    r.phase = 'flop';
-    msg(r, `🌊 FLOP: [ ${fmtCards(r.board)} ] — Pot: $${r.pot}`);
-    broadcast(r);
-    r.runoutTimer = setTimeout(guard(() => {
-      r.runoutTimer = null;
-      stepRunout(r);
-    }), RUNOUT_DELAY_MS);
-    return;
-  }
-
-  if (r.board.length === 3) {
-    // Deal Turn (1 card)
-    const turnCard = r.deck.pop();
-    r.board.push(turnCard);
-    r.phase = 'turn';
-    msg(r, `↩️ TURN: [ ${fmtCard(turnCard)} ] — Board: [ ${fmtCards(r.board)} ] — Pot: $${r.pot}`);
-    broadcast(r);
-    r.runoutTimer = setTimeout(guard(() => {
-      r.runoutTimer = null;
-      stepRunout(r);
-    }), RUNOUT_DELAY_MS);
-    return;
-  }
-
-  if (r.board.length === 4) {
-    // Deal River (1 card)
-    const riverCard = r.deck.pop();
-    r.board.push(riverCard);
-    r.phase = 'river';
-    msg(r, `🏞️ RIVER: [ ${fmtCard(riverCard)} ] — Board: [ ${fmtCards(r.board)} ] — Pot: $${r.pot}`);
+  if (r.board.length < 5) {
+    dealNextStreet(r);
     broadcast(r);
     r.runoutTimer = setTimeout(guard(() => {
       r.runoutTimer = null;
@@ -583,6 +558,19 @@ function doShowdown(r) {
   }
 
   awardPot(r, cont, ev);
+}
+
+function pickWinners(candidates, ev) {
+  if (!candidates || candidates.length === 0) return [];
+  if (!ev) return candidates;
+  const hands = candidates.map(p => ev.find(e => e.player === p)?.hand).filter(Boolean);
+  if (hands.length === candidates.length && hands.length > 0) {
+    try {
+      const best = Hand.winners(hands);
+      return candidates.filter(p => best.includes(ev.find(e => e.player === p)?.hand));
+    } catch { return candidates; }
+  }
+  return candidates;
 }
 
 function distributePotShare(r, tierWinners, tierPot, winningsMap) {
@@ -691,27 +679,12 @@ function awardPot(r, contenders, ev) {
 
     if (tierEligible.length === 0) {
       // Dead money from folded players: award to best overall hand
-      const allHands = ev ? contenders.map(p => ev.find(e => e.player === p)?.hand).filter(Boolean) : [];
-      let top = contenders;
-      if (allHands.length === contenders.length) {
-        try {
-          const best = Hand.winners(allHands);
-          top = contenders.filter(p => best.includes(ev.find(e => e.player === p)?.hand));
-        } catch { top = contenders; }
-      }
+      const top = pickWinners(contenders, ev);
       distributePotShare(r, top, tierPot, winningsMap);
       continue;
     }
 
-    const eligibleHands = ev ? tierEligible.map(p => ev.find(e => e.player === p)?.hand).filter(Boolean) : [];
-    let tierWinners = tierEligible;
-    if (eligibleHands.length === tierEligible.length && eligibleHands.length > 0) {
-      try {
-        const bestHands = Hand.winners(eligibleHands);
-        tierWinners = tierEligible.filter(p => bestHands.includes(ev.find(e => e.player === p)?.hand));
-      } catch { tierWinners = tierEligible; }
-    }
-
+    const tierWinners = pickWinners(tierEligible, ev);
     distributePotShare(r, tierWinners, tierPot, winningsMap);
   }
 
@@ -720,14 +693,7 @@ function awardPot(r, contenders, ev) {
   for (const amt of winningsMap.values()) distributed += amt;
   const undistributed = total - distributed;
   if (undistributed > 0) {
-    let top = contenders;
-    const allHands = ev ? contenders.map(p => ev.find(e => e.player === p)?.hand).filter(Boolean) : [];
-    if (allHands.length === contenders.length) {
-      try {
-        const best = Hand.winners(allHands);
-        top = contenders.filter(p => best.includes(ev.find(e => e.player === p)?.hand));
-      } catch { top = contenders; }
-    }
+    const top = pickWinners(contenders, ev);
     distributePotShare(r, top, undistributed, winningsMap);
   }
 
@@ -863,6 +829,27 @@ function startHand(r) {
   broadcast(r);
 }
 
+function reopenActionForRaise(r, cur, eff) {
+  const isFullRaise = (eff - r.roundBet) >= r.lastRaise;
+  if (isFullRaise) {
+    r.lastRaise = eff - r.roundBet;
+    for (const p of r.players) {
+      if (p !== cur && p.active && !p.folded && !p.allIn) {
+        p.acted = false;
+        p.canRaise = true;
+      }
+    }
+  } else {
+    for (const p of r.players) {
+      if (p !== cur && p.active && !p.folded && !p.allIn) {
+        if (p.bet < eff) {
+          p.acted = false;
+        }
+      }
+    }
+  }
+}
+
 function doAction(r, sid, action, amount) {
   if (r.paused) return 'Game is paused';
   if (r.showAllInHole) return 'All-in runout in progress';
@@ -919,25 +906,7 @@ function doAction(r, sid, action, amount) {
       const add = eff - cur.bet;
       if (add > cur.chips) return 'Not enough chips';
 
-      const isFullRaise = (eff - r.roundBet) >= r.lastRaise;
-      if (isFullRaise) {
-        r.lastRaise = eff - r.roundBet;
-        for (const p of r.players) {
-          if (p !== cur && p.active && !p.folded && !p.allIn) {
-            p.acted = false;
-            p.canRaise = true; // Reopen action for other players
-          }
-        }
-      } else {
-        // Incomplete raise: players who must call need to act, but canRaise is NOT reopened
-        for (const p of r.players) {
-          if (p !== cur && p.active && !p.folded && !p.allIn) {
-            if (p.bet < eff) {
-              p.acted = false;
-            }
-          }
-        }
-      }
+      reopenActionForRaise(r, cur, eff);
 
       cur.chips -= add; cur.bet += add; cur.totalBet += add; r.pot += add; r.roundBet = eff;
       cur.acted = true;
@@ -962,25 +931,7 @@ function doAction(r, sid, action, amount) {
       }
 
       if (newTot > r.roundBet) {
-        const isFullRaise = (newTot - r.roundBet) >= r.lastRaise;
-        if (isFullRaise) {
-          r.lastRaise = newTot - r.roundBet;
-          for (const p of r.players) {
-            if (p !== cur && p.active && !p.folded && !p.allIn) {
-              p.acted = false;
-              p.canRaise = true;
-            }
-          }
-        } else {
-          // Incomplete raise: require players behind with lower bet to act
-          for (const p of r.players) {
-            if (p !== cur && p.active && !p.folded && !p.allIn) {
-              if (p.bet < newTot) {
-                p.acted = false;
-              }
-            }
-          }
-        }
+        reopenActionForRaise(r, cur, newTot);
         r.roundBet = newTot;
       }
 
@@ -1037,6 +988,26 @@ function destroyRoom(rid) {
 
 const DISCONNECT_GRACE_MS = () => (server && server.listening && process.env.NODE_ENV !== 'test') ? 25000 : 0;
 
+function foldDisconnected(r, p, sid) {
+  p.folded = true;
+  const ih = inHandP(r);
+  if (ih.length <= 1) {
+    clearTurnTimer(r);
+    clearRunoutTimer(r);
+    awardPot(r, ih, null);
+  } else {
+    const isCur = r.players[r.curIdx]?.sid === (sid || p.sid);
+    if (isCur) {
+      clearTurnTimer(r);
+      if (bettingDone(r)) advanceStreet(r);
+      else advancePlayer(r);
+    } else if (bettingDone(r)) {
+      clearTurnTimer(r);
+      advanceStreet(r);
+    }
+  }
+}
+
 function handleDisconnect(sid) {
   const rid = sock2room[sid];
   delete sock2room[sid];
@@ -1073,24 +1044,7 @@ function handleDisconnect(sid) {
     if (graceMs) p.graceUsed = true;
     if (graceMs === 0) {
       msg(r, `⚠️ ${p.name} ${p.left ? 'left the game' : 'disconnected'}`);
-      p.folded = true;
-
-      const ih = inHandP(r);
-      if (ih.length <= 1) {
-        clearTurnTimer(r);
-        clearRunoutTimer(r);
-        awardPot(r, ih, null);
-      } else {
-        const isCur = r.players[r.curIdx]?.sid === sid;
-        if (isCur) {
-          clearTurnTimer(r);
-          if (bettingDone(r)) advanceStreet(r);
-          else advancePlayer(r);
-        } else if (bettingDone(r)) {
-          clearTurnTimer(r);
-          advanceStreet(r);
-        }
-      }
+      foldDisconnected(r, p, sid);
       broadcast(r);
     } else {
       // Mobile app-switch grace period: silent waiting without spamming reconnect log
@@ -1099,26 +1053,8 @@ function handleDisconnect(sid) {
         p.disconnectTimer = null;
         if (!p.connected && r.status === 'playing' && r.phase && r.phase !== 'showdown' && !p.folded) {
           msg(r, `⏱️ ${p.name} disconnected too long — auto folded`);
-          p.folded = true;
-
-          const ih = inHandP(r);
-          if (ih.length <= 1) {
-            clearTurnTimer(r);
-            clearRunoutTimer(r);
-            awardPot(r, ih, null);
-            broadcast(r);
-          } else {
-            const isCur = r.players[r.curIdx]?.sid === p.sid;
-            if (isCur) {
-              clearTurnTimer(r);
-              if (bettingDone(r)) advanceStreet(r);
-              else advancePlayer(r);
-            } else if (bettingDone(r)) {
-              clearTurnTimer(r);
-              advanceStreet(r);
-            }
-            broadcast(r);
-          }
+          foldDisconnected(r, p);
+          broadcast(r);
         }
       }), graceMs);
       broadcast(r);
@@ -1356,5 +1292,9 @@ module.exports = {
   handStrength,
   handStrengthCached,
   hsCache,
+  pickWinners,
+  resetStreet,
+  dealNextStreet,
+  foldDisconnected,
 };
 
