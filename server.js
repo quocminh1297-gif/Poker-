@@ -1150,7 +1150,7 @@ io.on('connection', socket => {
     const rid = sock2room[socket.id], r = rid && rooms[rid];
     if (!r) return cb({ err: 'Not in room' });
     if (r.hostId !== socket.id) return cb({ err: 'Host only' });
-    if (!r.phase || r.phase === 'showdown') return cb({ err: 'No active hand' });
+    if (!r.paused && (!r.phase || r.phase === 'showdown')) return cb({ err: 'No active hand' });
     r.paused = !r.paused;
     if (r.paused) {
       clearTurnTimer(r);
@@ -1158,7 +1158,9 @@ io.on('connection', socket => {
       msg(r, `⏸️ Game paused by host`);
     } else {
       msg(r, `▶️ Game resumed by host`);
-      if (r.showAllInHole && inHandP(r).length >= 2 && canActP(r).length <= 1) {
+      if (r.phase === 'showdown') {
+        scheduleNextHand(r);
+      } else if (r.showAllInHole && inHandP(r).length >= 2 && canActP(r).length <= 1) {
         stepRunout(r);
       } else {
         startTurnTimer(r);
