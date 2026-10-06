@@ -794,6 +794,14 @@ function startHand(r) {
   msg(r, `🃏 Hand #${r.handNum} — Dealer: ${r.players[r.dealerIdx].name}`);
   msg(r, `Blinds: ${r.players[sbI].name} (SB $${r.cfg.sb}) / ${r.players[bbI].name} (BB $${r.cfg.bb})`);
 
+  const can = canActP(r);
+  if (can.length === 0 || (can.length === 1 && can[0].bet >= r.roundBet)) {
+    startRunout(r);
+    return;
+  }
+  if (r.players[r.curIdx].allIn) {
+    r.curIdx = nextAct(r, r.curIdx);
+  }
   startTurnTimer(r);
   broadcast(r);
 }
