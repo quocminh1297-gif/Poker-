@@ -275,7 +275,6 @@ function startTurnTimer(r) {
     if (toCall > 0) {
       msg(r, `⏱️ ${c.name} timed out — auto fold`);
       c.folded = true; c.acted = true; c.lastAct = 'FOLD';
-      refundUncalledBet(r);
     } else {
       msg(r, `⏱️ ${c.name} timed out — auto check`);
       c.acted = true; c.lastAct = 'CHECK';
@@ -816,7 +815,6 @@ function doAction(r, sid, action, amount) {
     case 'fold':
       cur.folded = true; cur.acted = true; cur.canRaise = false; cur.lastAct = 'FOLD';
       msg(r, `❌ ${cur.name} folds`);
-      refundUncalledBet(r);
       break;
 
     case 'check':
@@ -1009,7 +1007,6 @@ function handleDisconnect(sid) {
     if (graceMs === 0) {
       msg(r, `⚠️ ${p.name} disconnected`);
       p.folded = true;
-      refundUncalledBet(r);
 
       const ih = inHandP(r);
       if (ih.length <= 1) {
@@ -1036,7 +1033,6 @@ function handleDisconnect(sid) {
         if (!p.connected && r.status === 'playing' && r.phase && r.phase !== 'showdown' && !p.folded) {
           msg(r, `⏱️ ${p.name} disconnected too long — auto folded`);
           p.folded = true;
-          refundUncalledBet(r);
 
           const ih = inHandP(r);
           if (ih.length <= 1) {
