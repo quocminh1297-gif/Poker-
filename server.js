@@ -175,7 +175,7 @@ function addOrReconnectPlayer(rid, sid, name, token, isMobile = false) {
     connected: true,
     isMobile: !!isMobile,
     waitingNextHand: isPlaying,
-    acted: false, canRaise: true, wins: 0, lastAct: null,
+    acted: false, canRaise: true, wins: 0, lastAct: null, graceUsed: false,
   };
 
   r.players.push(player);
@@ -757,6 +757,7 @@ function startHand(r) {
   for (const p of r.players) {
     p.hole = []; p.bet = 0; p.totalBet = 0;
     p.folded = false; p.allIn = false; p.acted = false; p.canRaise = true; p.lastAct = null;
+    p.graceUsed = false;
     if (p.waitingNextHand && p.chips > 0) {
       p.waitingNextHand = false;
       p.active = true;
@@ -1033,9 +1034,10 @@ function handleDisconnect(sid) {
   }
 
   // If in an active hand
-  if (r.status === 'playing' && r.phase && r.phase !== 'showdown' && !p.folded && !p.allIn) {
+  if (r.status === 'playing' && r.phase && r.phase !== 'showdown' && p.active && !p.folded && !p.allIn) {
     // Only mobile users get a disconnect grace period for app-switching. Desktop disconnects fold immediately.
-    const graceMs = (p.isMobile && !p.left) ? DISCONNECT_GRACE_MS() : 0;
+    const graceMs = (p.isMobile && !p.left && !p.graceUsed) ? DISCONNECT_GRACE_MS() : 0;
+    if (graceMs) p.graceUsed = true;
     if (graceMs === 0) {
       msg(r, `⚠️ ${p.name} ${p.left ? 'left the game' : 'disconnected'}`);
       p.folded = true;
@@ -1315,5 +1317,6 @@ module.exports = {
   destroyRoom,
   DISCONNECT_GRACE_MS,
   mkDeck,
+  handleDisconnect,
 };
 
