@@ -51,10 +51,9 @@ const sock2room = Object.create(null);
 
 /* ── DECK ──────────────────────────────────────── */
 function mkDeck() {
-  const d = [];
-  for (const s of SUITS) for (const r of RANKS) d.push(r + s);
+  const d = SUITS.flatMap(s => RANKS.map(r => r + s));
   for (let i = d.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = randomInt(i + 1);
     [d[i], d[j]] = [d[j], d[i]];
   }
   return d;
@@ -1272,5 +1271,6 @@ module.exports = {
   sanitizeName,
   destroyRoom,
   DISCONNECT_GRACE_MS,
+  mkDeck,
 };
 
