@@ -108,9 +108,15 @@ function handStrength(hole, board) {
   try { return Hand.solve([...hole, ...board]).descr; } catch { return null; }
 }
 
+function newRoomId() {
+  let id;
+  do { id = randomBytes(3).toString('hex').toUpperCase(); } while (rooms[id]);
+  return id;
+}
+
 /* ── ROOM ──────────────────────────────────────── */
 function createRoom(hostId, o = {}) {
-  const id = uuidv4().substring(0, 6).toUpperCase();
+  const id = newRoomId();
   rooms[id] = {
     id, hostId, status: 'waiting',
     cfg: sanitizeCfg(o),
@@ -1205,6 +1211,8 @@ io.on('connection', socket => {
     if (r.hostId !== socket.id) return cb({ err: 'Host only' });
     if (r.status === 'playing') return cb({ err: 'Cannot change during game' });
     const cfg = sanitizeCfg(d);
+    const live = r.players.filter(p => !p.left).length;
+    if (cfg.maxP < live) return cb({ err: `Max players không được nhỏ hơn số người hiện có (${live})` });
     r.cfg = cfg;
     if (d.chips > 0) r.players.forEach(p => { p.chips = cfg.chips; p.active = true; });
     msg(r, '⚙️ Settings updated');
