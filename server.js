@@ -31,7 +31,21 @@ function safeOn(socket, allow, event, handler) {
 /** Protect timers against unhandled throws */
 const guard = fn => (...a) => { try { return fn(...a); } catch (e) { console.error('[timer]', e); } };
 
+const helmet = require('helmet');
 const app    = express();
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc:   ["'self'"],
+      scriptSrc:    ["'self'"],
+      styleSrc:     ["'self'", 'https://fonts.googleapis.com'],
+      styleSrcAttr: ["'unsafe-inline'"],
+      fontSrc:      ["'self'", 'https://fonts.gstatic.com'],
+      connectSrc:   ["'self'", 'ws:', 'wss:'],
+      imgSrc:       ["'self'", 'data:'],
+    },
+  },
+}));
 const server = http.createServer(app);
 const io     = new Server(server, {
   maxHttpBufferSize: 1e4,

@@ -595,7 +595,7 @@ function renderMyArea(st, me) {
       ? `<div class="seat-timer-bar-wrap"><div class="seat-timer-bar-fill" id="seat-timer-${gIdx}"></div></div>` : '';
 
     const betHtml = me.bet > 0 ? `<div class="seat-bet bet-up">$${fmt(me.bet)}</div>` : '';
-    const rebuyHtml = (me.chips === 0) ? `<button class="hero-rebuy-btn" onclick="triggerRebuy()">🔄 Rebuy</button>` : '';
+    const rebuyHtml = (me.chips === 0) ? `<button class="hero-rebuy-btn" data-click="triggerRebuy">🔄 Rebuy</button>` : '';
 
     mySeatEl.innerHTML = `
       <div class="seat-inner hero-seat-inner" style="position:relative">
@@ -1219,3 +1219,53 @@ if (isMobile()) {
     attemptSessionRestore();
   }
 }
+
+/* ─── DECLARATIVE EVENT DELEGATION (CSP Compliant) ─── */
+document.addEventListener('click', e => {
+  const btn = e.target.closest('[data-click]');
+  if (!btn) {
+    if (e.target.id === 'log-overlay') toggleLog();
+    return;
+  }
+  const actName = btn.getAttribute('data-click');
+  if (actName === 'toggleLog') toggleLog();
+  else if (actName === 'switchTab-c') switchTab('c');
+  else if (actName === 'switchTab-j') switchTab('j');
+  else if (actName === 'createRoom') createRoom();
+  else if (actName === 'joinRoom') joinRoom();
+  else if (actName === 'copyCode') copyCode();
+  else if (actName === 'saveCfg') saveCfg();
+  else if (actName === 'leaveRoom') leaveRoom();
+  else if (actName === 'startGame') startGame();
+  else if (actName === 'togglePause') togglePause();
+  else if (actName === 'toggleChat') toggleChat();
+  else if (actName === 'confirmLeaveRoom') confirmLeaveRoom();
+  else if (actName === 'triggerRebuy') triggerRebuy();
+  else if (actName === 'preset-min') preset('min');
+  else if (actName === 'preset-0.5') preset(0.5);
+  else if (actName === 'preset-0.75') preset(0.75);
+  else if (actName === 'preset-1') preset(1);
+  else if (actName === 'preset-max') preset('max');
+  else if (actName === 'adjustRaise-down') adjustRaise(-1);
+  else if (actName === 'adjustRaise-up') adjustRaise(1);
+  else if (actName === 'closeRaise') closeRaise();
+  else if (actName === 'confirmRaise') confirmRaise();
+  else if (actName === 'act-call') act('call');
+  else if (actName === 'act-check') act('check');
+  else if (actName === 'act-fold') act('fold');
+  else if (actName === 'toggleRaise') toggleRaise();
+  else if (actName === 'sendChat') sendChat();
+});
+
+document.addEventListener('input', e => {
+  if (e.target.id === 'log-filter-inp') onLogFilter(e.target.value);
+  else if (e.target.id === 'r-input') syncSlider();
+  else if (e.target.id === 'r-slider') syncInput();
+});
+
+document.addEventListener('keydown', e => {
+  if (e.target.id === 'chat-in' && e.key === 'Enter') {
+    e.preventDefault();
+    sendChat();
+  }
+});

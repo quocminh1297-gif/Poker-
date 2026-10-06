@@ -30,7 +30,7 @@
 </div>
 
 <!-- ═══ LOG OVERLAY ═══ -->
-<div id="log-overlay" class="log-overlay hidden" onclick="if(event.target===this)toggleLog()">
+<div id="log-overlay" class="log-overlay hidden">
   <div class="log-panel">
     <div class="log-hdr">
       <div class="log-hdr-left">
@@ -38,8 +38,8 @@
         <span class="log-count" id="log-count">0 items</span>
       </div>
       <div class="log-hdr-right">
-        <input type="text" id="log-filter-inp" class="log-search-inp" placeholder="Search logs..." oninput="onLogFilter(this.value)"/>
-        <button class="log-close-btn" onclick="toggleLog()" title="Close">✕</button>
+        <input type="text" id="log-filter-inp" class="log-search-inp" placeholder="Search logs..."/>
+        <button class="log-close-btn" data-click="toggleLog" title="Close">✕</button>
       </div>
     </div>
     <div class="log-body" id="log-body"></div>
@@ -57,12 +57,12 @@
     </div>
     <div class="lobby-card">
       <div class="tabs">
-        <button class="tab active" id="tab-c" onclick="switchTab('c')">Create Room</button>
-        <button class="tab"        id="tab-j" onclick="switchTab('j')">Join Room</button>
+        <button class="tab active" id="tab-c" data-click="switchTab-c">Create Room</button>
+        <button class="tab"        id="tab-j" data-click="switchTab-j">Join Room</button>
       </div>
       <!-- CREATE -->
       <div id="pan-c" class="pan active">
-        <div class="fg"><label>Your Name</label><input type="text" id="c-name" placeholder="Enter name…" maxlength="20" autocomplete="off"/></div>
+        <div class="fg"><label>Your Name</label><input type="text" id="c-name" placeholder="Enter name…" maxlength="16" autocomplete="off"/></div>
         <div class="cfg-box">
           <div class="cfg-title">⚙ Room Settings</div>
           <div class="cfg-row3">
@@ -75,13 +75,13 @@
             <div class="cfg-item"><label>Max Players</label><input type="number" id="c-max" value="9" min="2" max="9"/></div>
           </div>
         </div>
-        <button class="btn-go" onclick="createRoom()">🎲 Create Room</button>
+        <button class="btn-go" data-click="createRoom">🎲 Create Room</button>
       </div>
       <!-- JOIN -->
       <div id="pan-j" class="pan">
-        <div class="fg"><label>Your Name</label><input type="text" id="j-name" placeholder="Enter name…" maxlength="20" autocomplete="off"/></div>
+        <div class="fg"><label>Your Name</label><input type="text" id="j-name" placeholder="Enter name…" maxlength="16" autocomplete="off"/></div>
         <div class="fg"><label>Room Code</label><input type="text" id="j-code" placeholder="ABC123" maxlength="6" autocomplete="off" class="code-input"/></div>
-        <button class="btn-go" onclick="joinRoom()">🚪 Join Room</button>
+        <button class="btn-go" data-click="joinRoom">🚪 Join Room</button>
       </div>
       <div id="lobby-err" class="err"></div>
     </div>
@@ -98,7 +98,7 @@
       </div>
       <div class="w-code-block">
         <div class="w-code" id="w-code">——</div>
-        <button class="w-copy" onclick="copyCode()">📋 Copy</button>
+        <button class="w-copy" data-click="copyCode">📋 Copy</button>
       </div>
     </div>
     <div class="w-body">
@@ -117,12 +117,12 @@
           <div class="cfg-item"><label>Ante <span class="note">(0=off)</span></label><input type="number" id="w-ante" min="0" step="500"/></div>
           <div class="cfg-item"><label>Max Players</label><input type="number" id="w-max" min="2" max="9"/></div>
         </div>
-        <button class="btn-sec" onclick="saveCfg()">💾 Save Settings</button>
+        <button class="btn-sec" data-click="saveCfg">💾 Save Settings</button>
       </div>
     </div>
     <div class="w-footer">
-      <button class="btn-sec btn-leave-w" onclick="leaveRoom()">🚪 Leave</button>
-      <button class="btn-go" id="btn-start" onclick="startGame()">🃏 Start Game</button>
+      <button class="btn-sec btn-leave-w" data-click="leaveRoom">🚪 Leave</button>
+      <button class="btn-go" id="btn-start" data-click="startGame">🃏 Start Game</button>
       <div id="w-err" class="err"></div>
     </div>
   </div>
@@ -142,10 +142,10 @@
       <div class="pot-display">POT <span id="pot-val">$0</span></div>
     </div>
     <div class="tb-r">
-      <button class="tb-btn" id="tb-pause" onclick="togglePause()" style="display:none">⏸ PAUSE</button>
-      <button class="tb-btn" onclick="toggleLog()">📋 LOG</button>
-      <button class="tb-btn" id="tb-chat-btn" onclick="toggleChat()">💬</button>
-      <button class="tb-btn tb-leave" onclick="confirmLeaveRoom()" title="Leave Room">🚪</button>
+      <button class="tb-btn" id="tb-pause" data-click="togglePause" style="display:none">⏸ PAUSE</button>
+      <button class="tb-btn" data-click="toggleLog">📋 LOG</button>
+      <button class="tb-btn" id="tb-chat-btn" data-click="toggleChat">💬</button>
+      <button class="tb-btn tb-leave" data-click="confirmLeaveRoom" title="Leave Room">🚪</button>
     </div>
   </header>
 
@@ -179,7 +179,7 @@
       <div class="my-meta">
         <div class="my-name-row" id="my-name-row"></div>
         <div class="my-hs"       id="my-hs"></div>
-        <button id="btn-rebuy" class="tb-btn rebuy-btn" style="display:none;" onclick="triggerRebuy()">
+        <button id="btn-rebuy" class="tb-btn rebuy-btn" style="display:none;" data-click="triggerRebuy">
           🔄 Rebuy Chips
         </button>
       </div>
@@ -205,38 +205,38 @@
         <!-- Left: Your bet editable input -->
         <div class="rp-bet-box">
           <div class="rp-bet-label">Your bet</div>
-          <input type="number" id="r-input" class="rp-bet-input" oninput="syncSlider()" placeholder="0"/>
+          <input type="number" id="r-input" class="rp-bet-input" placeholder="0"/>
           <div class="rp-bet-bb" id="rp-bet-bb">0BB</div>
         </div>
         <!-- Presets — horizontal row like PokerNow -->
         <div class="rp-presets">
-          <button onclick="preset('min')">MIN RAISE</button>
-          <button onclick="preset(0.5)">1/2 POT</button>
-          <button onclick="preset(0.75)">3/4 POT</button>
-          <button onclick="preset(1)">POT</button>
-          <button onclick="preset('max')">ALL IN</button>
+          <button data-click="preset-min">MIN RAISE</button>
+          <button data-click="preset-0.5">1/2 POT</button>
+          <button data-click="preset-0.75">3/4 POT</button>
+          <button data-click="preset-1">POT</button>
+          <button data-click="preset-max">ALL IN</button>
         </div>
         <!-- Slider row -->
         <div class="rp-slider-row">
-          <button class="rp-adj" onclick="adjustRaise(-1)">−</button>
-          <input type="range" id="r-slider" oninput="syncInput()"/>
-          <button class="rp-adj" onclick="adjustRaise(1)">+</button>
+          <button class="rp-adj" data-click="adjustRaise-down">−</button>
+          <input type="range" id="r-slider"/>
+          <button class="rp-adj" data-click="adjustRaise-up">+</button>
         </div>
         <!-- BACK + BET -->
         <div class="rp-actions">
-          <button class="rp-back" onclick="closeRaise()">
+          <button class="rp-back" data-click="closeRaise">
             <span class="rp-key">ESC</span>BACK
           </button>
-          <button class="rp-bet-btn" onclick="confirmRaise()">BET</button>
+          <button class="rp-bet-btn" data-click="confirmRaise">BET</button>
         </div>
       </div>
 
       <!-- Normal action row: RAISE | CHECK | CALL | FOLD -->
       <div class="act-row" id="act-row">
-        <button class="btn-a call"  id="b-call"  onclick="act('call')"  data-key="C" style="display:none">CALL</button>
-        <button class="btn-a raise" id="b-raise" onclick="toggleRaise()" data-key="R">RAISE</button>
-        <button class="btn-a check" id="b-check" onclick="act('check')" data-key="K">CHECK</button>
-        <button class="btn-a fold"  id="b-fold"  onclick="act('fold')"  data-key="F">FOLD</button>
+        <button class="btn-a call"  id="b-call"  data-click="act-call"  data-key="C" style="display:none">CALL</button>
+        <button class="btn-a raise" id="b-raise" data-click="toggleRaise" data-key="R">RAISE</button>
+        <button class="btn-a check" id="b-check" data-click="act-check" data-key="K">CHECK</button>
+        <button class="btn-a fold"  id="b-fold"  data-click="act-fold"  data-key="F">FOLD</button>
       </div>
 
       <div class="act-err-row"><span id="act-err" class="err-inline"></span></div>
@@ -249,13 +249,12 @@
     <div class="chat-panel" id="chat-panel">
       <div class="chat-hdr">
         <span>💬 Chat</span>
-        <button onclick="toggleChat()">✕</button>
+        <button data-click="toggleChat">✕</button>
       </div>
       <div class="chat-msgs" id="chat-msgs"></div>
       <div class="chat-inp">
-        <input type="text" id="chat-in" placeholder="Say something…" maxlength="200"
-               onkeydown="if(event.key==='Enter')sendChat()"/>
-        <button onclick="sendChat()">↵</button>
+        <input type="text" id="chat-in" placeholder="Say something…" maxlength="200"/>
+        <button data-click="sendChat">↵</button>
       </div>
     </div>
   </div>
