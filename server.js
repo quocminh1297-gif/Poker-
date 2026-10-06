@@ -33,9 +33,28 @@ const guard = fn => (...a) => { try { return fn(...a); } catch (e) { console.err
 
 const app    = express();
 const server = http.createServer(app);
-const io     = new Server(server, { cors: { origin: '*' } });
+const io     = new Server(server, {
+  maxHttpBufferSize: 1e4,
+  cors: { origin: false },
+  pingInterval: 10000,
+  pingTimeout: 8000,
+});
 const PORT   = process.env.PORT || 3000;
 app.use(express.static(path.join(__dirname, 'public')));
+
+const MAX_ROOMS_PER_IP = 5;
+const ipOf = s => (s.handshake.headers['x-forwarded-for'] || s.handshake.address || '').toString().split(',')[0].trim();
+
+const fails = new Map(); // ip -> { n, t }
+function tooManyFails(ip) {
+  const f = fails.get(ip);
+  return !!f && Date.now() - f.t < 60000 && f.n >= 10;
+}
+function noteFail(ip) {
+  const f = fails.get(ip);
+  if (!f || Date.now() - f.t >= 60000) fails.set(ip, { n: 1, t: Date.now() });
+  else f.n++;
+}
 
 /* ── CONSTANTS ─────────────────────────────────── */
 const SUITS       = ['s','h','d','c'];
@@ -1085,9 +1104,14 @@ io.on('connection', socket => {
         return cb({ err: 'Bạn đang ở trong một phòng — hãy rời phòng trước' });
       }
     }
+    const ip = ipOf(socket);
+    if (Object.values(rooms).filter(r => r.creatorIp === ip).length >= MAX_ROOMS_PER_IP) {
+      return cb({ err: 'Too many rooms' });
+    }
     const cleanName = sanitizeName(d.name);
     if (!cleanName) return cb({ err: 'Name required (1-16 characters)' });
     const id  = createRoom(socket.id, { chips: d.chips, sb: d.sb, bb: d.bb, ante: d.ante, maxP: d.maxP });
+    rooms[id].creatorIp = ip;
     const token = isStr(d.token, 64) ? d.token : null;
     const res = addOrReconnectPlayer(id, socket.id, cleanName, token, d.isMobile === true);
     if (res.err) return cb({ err: res.err });
@@ -1098,6 +1122,9 @@ io.on('connection', socket => {
   });
 
   on('join_room', (d, cb) => {
+    const ip = ipOf(socket);
+    if (tooManyFails(ip)) return cb({ err: 'Too many failed attempts. Try again later.' });
+
     const curRid = sock2room[socket.id];
     if (curRid && rooms[curRid]) {
       const mine = rooms[curRid].players.find(p => p.sid === socket.id && !p.left);
@@ -1107,12 +1134,19 @@ io.on('connection', socket => {
     }
     const cleanName = sanitizeName(d.name);
     if (!cleanName) return cb({ err: 'Name required (1-16 characters)' });
-    if (!isStr(d.id, 12)) return cb({ err: 'Room not found' });
+    if (!isStr(d.id, 12)) {
+      noteFail(ip);
+      return cb({ err: 'Room not found' });
+    }
     const id = d.id.toUpperCase();
-    if (!rooms[id]) return cb({ err: 'Room not found' });
+    if (!rooms[id]) {
+      noteFail(ip);
+      return cb({ err: 'Room not found' });
+    }
     const token = isStr(d.token, 64) ? d.token : null;
     const res = addOrReconnectPlayer(id, socket.id, cleanName, token, d.isMobile === true);
     if (res.err) return cb({ err: res.err });
+    fails.delete(ip);
     socket.join(id);
     if (!res.reconnected) {
       msg(rooms[id], `🚪 ${cleanName} joined${res.player.waitingNextHand ? ' (waiting for next hand)' : ''}`);
