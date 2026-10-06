@@ -1160,9 +1160,10 @@ const hsMeta  = d => { const m = HS_RULES.find(([re]) => re.test(d || '')); retu
 function hsClass(d) { return hsMeta(d).cls; }
 function hsIcon(d) { return hsMeta(d).icon; }
 function fmt(n) {
-  if (n==null) return '0';
-  if (n>=1000000) return (n/1000000).toFixed(1)+'M';
-  if (n>=10000)   return (n/1000).toFixed(0)+'K';
+  if (n == null) return '0';
+  const f = (v, u) => (+v.toFixed(1)).toString() + u;
+  if (n >= 1e6) return f(n / 1e6, 'M');
+  if (n >= 1e4) return f(n / 1e3, 'K');
   return n.toLocaleString();
 }
 
