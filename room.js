@@ -9,6 +9,7 @@ const {
 } = require('./config');
 const {
   mkDeck,
+  fmtCard,
   fmtCards,
   handStrengthCached,
   pickWinners,
