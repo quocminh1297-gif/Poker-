@@ -900,6 +900,10 @@ function doAction(r, sid, action, amount) {
       if (chips <= 0) return 'No chips';
       const newTot = cur.bet + chips;
 
+      if (newTot > r.roundBet && cur.canRaise === false) {
+        return 'Cannot raise — action was not reopened (chỉ được call hoặc fold)';
+      }
+
       if (newTot > r.roundBet) {
         const isFullRaise = (newTot - r.roundBet) >= r.lastRaise;
         if (isFullRaise) {
