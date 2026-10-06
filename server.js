@@ -235,6 +235,9 @@ function filterState(room, sid) {
     roundBet: room.roundBet, lastRaise: room.lastRaise,
     handNum: room.handNum, msgs: room.msgs.slice(-40),
     hs, result: safeResult,
+    turnSec: TURN_SEC,
+    turnMsLeft: (room.showAllInHole || room.phase === 'showdown' || !room.turnStartMs)
+      ? null : Math.max(0, TURN_SEC * 1000 - (Date.now() - room.turnStartMs)),
     turnStartMs: (room.showAllInHole || room.phase === 'showdown') ? null : (room.turnStartMs || null),
     paused: room.paused || false,
   };

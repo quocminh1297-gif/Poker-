@@ -466,7 +466,7 @@ function renderSeats(st, opps) {
     }
 
     /* Timer bar — at bottom of seat-info-right */
-    const timerBar = isTurn && st.turnStartMs
+    const timerBar = isTurn && (st.turnMsLeft != null || st.turnStartMs)
       ? `<div class="seat-timer-bar-wrap"><div class="seat-timer-bar-fill" id="seat-timer-${gIdx}"></div></div>` : '';
 
     const betCls = (mobile && pos.bet) ? ` ${pos.bet}` : '';
@@ -591,7 +591,7 @@ function renderMyArea(st, me) {
       actHtml = `<div class="seat-act ${acls}">${escapeHtml(me.lastAct)}</div>`;
     }
 
-    const timerBar = isTurn && st.turnStartMs
+    const timerBar = isTurn && (st.turnMsLeft != null || st.turnStartMs)
       ? `<div class="seat-timer-bar-wrap"><div class="seat-timer-bar-fill" id="seat-timer-${gIdx}"></div></div>` : '';
 
     const betHtml = me.bet > 0 ? `<div class="seat-bet bet-up">$${fmt(me.bet)}</div>` : '';
@@ -838,7 +838,7 @@ function updateTimer(st) {
   const gIdx     = st.players.findIndex(p=>p.isMe);
   const isMyTurn = st.curIdx === gIdx;
 
-  if (!st.turnStartMs || st.phase === 'showdown' || !me || me.folded || me.allIn || st.paused) {
+  if (st.turnMsLeft == null || st.phase === 'showdown' || !me || me.folded || me.allIn || st.paused) {
     if (wrap) wrap.classList.remove('show');
     const oldSeatTimer = document.querySelector('.seat-timer-bar-fill');
     if (oldSeatTimer) oldSeatTimer.style.width = '0%';
@@ -850,11 +850,15 @@ function updateTimer(st) {
     else wrap.classList.remove('show');
   }
 
+  const recvAt = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  const total = (st.turnSec || 30) * 1000;
+
   function loop() {
-    const elapsed  = Date.now() - st.turnStartMs;
-    const secsLeft = Math.max(0, 30 - elapsed / 1000);
-    const pct      = Math.min(100, Math.max(0, (secsLeft / 30) * 100));
-    const warn     = secsLeft <= 10, danger = secsLeft <= 5;
+    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    const msLeft = Math.max(0, st.turnMsLeft - (now - recvAt));
+    const secsLeft = msLeft / 1000;
+    const pct = Math.min(100, Math.max(0, (msLeft / total) * 100));
+    const warn = secsLeft <= 10, danger = secsLeft <= 5;
 
     if (isMyTurn) {
       if (fill) {
@@ -875,7 +879,7 @@ function updateTimer(st) {
       seatEl.className = 'seat-timer-bar-fill' + (danger ? ' td' : warn ? ' tw' : '');
     }
 
-    if (secsLeft > 0 && !st.paused && S && S.turnStartMs === st.turnStartMs) {
+    if (msLeft > 0 && !st.paused && S === st) {
       timerRafId = requestAnimationFrame(loop);
     } else {
       timerRafId = null;
