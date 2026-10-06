@@ -113,7 +113,6 @@ function hideNetToast() {
 
 let isReconnecting = false;
 function attemptSessionRestore() {
-  if (!isMobile()) return; // Desktop does not need app-switch restore
   const session = getSession();
   if (!session || !session.rId || !session.token) return;
   if (!socket.connected) {
@@ -130,7 +129,7 @@ function attemptSessionRestore() {
     id: session.rId,
     name: session.name,
     token: session.token,
-    isMobile: true
+    isMobile: isMobile()
   }, res => {
     clearTimeout(restoreTimeout);
     isReconnecting = false;
@@ -164,7 +163,7 @@ function leaveRoom() {
 socket.on('connect', () => {
   myId = socket.id;
   hideNetToast();
-  if (isMobile()) attemptSessionRestore();
+  attemptSessionRestore();
 });
 socket.on('disconnect', () => {
   if (isMobile()) showNetToast('⚠️ Mất kết nối — Đang thử lại...');
@@ -173,25 +172,21 @@ socket.on('connect_error', () => {
   if (isMobile()) showNetToast('⚠️ Lỗi kết nối — Đang thử lại...');
 });
 
-// Mobile-only app-switch and tab focus listeners
+// App-switch and tab focus listeners (both desktop and mobile)
 document.addEventListener('visibilitychange', () => {
-  if (!isMobile()) return;
   if (document.visibilityState === 'visible') {
     if (!socket.connected) socket.connect();
     attemptSessionRestore();
   }
 });
 window.addEventListener('pageshow', () => {
-  if (!isMobile()) return;
   if (!socket.connected) socket.connect();
   attemptSessionRestore();
 });
 window.addEventListener('focus', () => {
-  if (!isMobile()) return;
   attemptSessionRestore();
 });
 window.addEventListener('online', () => {
-  if (!isMobile()) return;
   if (!socket.connected) socket.connect();
   attemptSessionRestore();
 });
@@ -229,7 +224,7 @@ function createRoom() {
     maxP:  +document.getElementById('c-max').value   || 9,
   }, r => {
     if (r.err) return lerr(r.err);
-    if (r.ok && mob) saveSession(r.id, r.token, name);
+    if (r.ok) saveSession(r.id, r.token, name);
   });
 }
 function joinRoom() {
@@ -240,7 +235,7 @@ function joinRoom() {
   const mob = isMobile();
   socket.emit('join_room', { name, id: code, isMobile: mob }, r => {
     if (r.err) return lerr(r.err);
-    if (r.ok && mob) saveSession(r.id, r.token, name);
+    if (r.ok) saveSession(r.id, r.token, name);
   });
 }
 function lerr(m) {
