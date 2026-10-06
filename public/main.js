@@ -793,7 +793,8 @@ function preset(v) {
   } else if (v === 'max') {
     val = maxR;
   } else {
-    const target = rb + Math.floor(pot * v);
+    const toCall = rb - (me?.bet || 0);
+    const target = rb + Math.floor((pot + toCall) * v);
     if (maxR <= minR) {
       val = maxR;
     } else {
