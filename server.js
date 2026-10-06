@@ -187,6 +187,7 @@ function addOrReconnectPlayer(rid, sid, name, token, isMobile = false) {
 
   const isPlaying = r.status === 'playing';
   const player = {
+    pid: randomUUID(),
     sid, token: randomUUID(), name,
     chips: r.cfg.chips,
     hole: [], bet: 0, totalBet: 0,
@@ -220,7 +221,9 @@ function filterState(room, sid) {
       hole = isMe ? p.hole : p.hole.map(() => '??');
     }
     return {
-      sid: p.sid, name: p.name, chips: p.chips,
+      pid: p.pid || (p.pid = randomUUID()),
+      isHost: p.sid === room.hostId,
+      name: p.name, chips: p.chips,
       bet: p.bet, totalBet: p.totalBet,
       folded: p.folded, allIn: p.allIn,
       active: p.active && p.connected,
@@ -248,7 +251,7 @@ function filterState(room, sid) {
   }
 
   return {
-    id: room.id, hostId: room.hostId, status: room.status,
+    id: room.id, status: room.status,
     cfg: room.cfg, phase: room.phase,
     board: room.board, pot: room.pot,
     players, curIdx: room.curIdx, dealerIdx: room.dealerIdx,

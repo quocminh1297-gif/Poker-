@@ -246,7 +246,7 @@ function lerr(m) {
 /* ─── WAITING ─── */
 function renderWait(st) {
   document.getElementById('w-code').textContent = st.id;
-  const isHost = st.hostId === socket.id;
+  const isHost = st.players.some(p => p.isMe && p.isHost);
   document.getElementById('btn-start').style.display     = isHost ? '' : 'none';
   document.getElementById('w-cfg-panel').style.display   = isHost ? '' : 'none';
   if (isHost) {
@@ -310,7 +310,7 @@ function renderGame(st) {
   /* Pause button (host only) */
   const pauseBtn = document.getElementById('tb-pause');
   if (pauseBtn) {
-    pauseBtn.style.display = (st.hostId === socket.id) ? '' : 'none';
+    pauseBtn.style.display = st.players.some(p => p.isMe && p.isHost) ? '' : 'none';
     pauseBtn.textContent = st.paused ? '▶ RESUME' : '⏸ PAUSE';
     pauseBtn.style.borderColor = st.paused ? '#43a047' : '';
     pauseBtn.style.color = st.paused ? '#68d391' : '';
@@ -413,7 +413,7 @@ function renderSeats(st, opps) {
   const positions = posSource[opps.length] || posSource[Math.min(opps.length, 8)] || [];
 
   opps.forEach((p, i) => {
-    const gIdx     = st.players.findIndex(pl => pl.sid === p.sid);
+    const gIdx     = st.players.findIndex(pl => pl.pid === p.pid);
     const isTurn   = st.curIdx === gIdx && !p.folded && !p.allIn;
     const isDealer = st.dealerIdx === gIdx;
     const pos      = positions[i] || positions[positions.length - 1];
@@ -649,7 +649,7 @@ function renderActions(st, me) {
   }
 
   const cur     = st.players[st.curIdx];
-  const isMyTurn= cur && cur.sid===socket.id;
+  const isMyTurn= !!(cur && cur.isMe);
 
   if (!isMyTurn) {
     allBtns.forEach(id=>{ const b=document.getElementById(id); if(b)b.disabled=true; });
@@ -1190,7 +1190,7 @@ document.addEventListener('keydown', e => {
   if (['INPUT','TEXTAREA'].includes(activeTag)) return;
   if (!S || S.status!=='playing') return;
   const cur = S.players[S.curIdx];
-  if (!cur||cur.sid!==socket.id) return;
+  if (!cur || !cur.isMe) return;
   const me = S.players.find(p=>p.isMe);
   if (!me||me.folded||me.allIn) return;
   const k = e.key.toLowerCase();
