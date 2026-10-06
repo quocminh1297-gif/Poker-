@@ -1169,4 +1169,32 @@ io.on('connection', socket => {
   });
 });
 
-server.listen(PORT, () => console.log(`🃏 Poker → http://localhost:${PORT}`));
+if (require.main === module) {
+  server.listen(PORT, () => console.log(`🃏 Poker → http://localhost:${PORT}`));
+}
+
+module.exports = {
+  app,
+  server,
+  io,
+  rooms,
+  sock2room,
+  createRoom,
+  addOrReconnectPlayer,
+  startGame,
+  startHand,
+  doAction,
+  awardPot,
+  refundUncalledBet,
+  clearTurnTimer,
+  clearRunoutTimer,
+  inHandP,
+  canActP,
+  nextAct,
+  filterState,
+  sanitizeCfg,
+  sanitizeName,
+  destroyRoom,
+  DISCONNECT_GRACE_MS,
+};
+
