@@ -909,7 +909,7 @@ function formatLogCards(text) {
 let allMsgsCache = [];
 let logFilterTerm = '';
 let userScrolledLog = false;
-let lastRenderedMsgTs = 0;
+let lastRenderedMsgId = 0;
 
 const logBodyEl = document.getElementById('log-body');
 if (logBodyEl) {
@@ -1016,21 +1016,21 @@ function renderLog(msgs) {
   if (!logBody) return;
 
   // Incremental append: if not filtering and already has rendered logs
-  if (!logFilterTerm && lastRenderedMsgTs > 0 && logBody.children.length > 0) {
-    const newMsgs = msgs.filter(m => (m.ts || 0) > lastRenderedMsgTs);
+  if (!logFilterTerm && lastRenderedMsgId > 0 && logBody.children.length > 0) {
+    const newMsgs = msgs.filter(m => (m.id || 0) > lastRenderedMsgId);
     if (newMsgs.length > 0 && newMsgs.length < msgs.length) {
       const frag = document.createDocumentFragment();
       newMsgs.forEach(m => {
         frag.appendChild(createLogDiv(m));
       });
       logBody.appendChild(frag);
-      lastRenderedMsgTs = msgs[msgs.length - 1].ts || Date.now();
+      lastRenderedMsgId = msgs[msgs.length - 1].id || 0;
       if (!userScrolledLog) logBody.scrollTop = logBody.scrollHeight;
       return;
     }
   }
 
-  lastRenderedMsgTs = msgs.length ? (msgs[msgs.length - 1].ts || Date.now()) : 0;
+  lastRenderedMsgId = msgs.length ? (msgs[msgs.length - 1].id || 0) : 0;
   renderFilteredLog();
 }
 
@@ -1040,6 +1040,12 @@ function toggleLog() {
   overlay.classList.toggle('hidden', !logOpen);
   if (logOpen) {
     userScrolledLog = false;
+    socket.emit('get_log', res => {
+      if (res && res.ok && Array.isArray(res.msgs)) {
+        allMsgsCache = res.msgs;
+        renderFilteredLog();
+      }
+    });
     const logBody = document.getElementById('log-body');
     if (logBody) logBody.scrollTop = logBody.scrollHeight;
   }

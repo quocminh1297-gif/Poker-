@@ -267,8 +267,9 @@ function broadcast(r) {
 }
 
 function msg(r, t) {
-  r.msgs.push({ t, ts: Date.now() });
-  if (r.msgs.length > 5000) r.msgs.shift();
+  r.msgSeq = (r.msgSeq || 0) + 1;
+  r.msgs.push({ id: r.msgSeq, t, ts: Date.now() });
+  if (r.msgs.length > 1000) r.msgs.shift();
 }
 
 /* ── TURN TIMER ─────────────────────────────────── */
@@ -1273,6 +1274,11 @@ io.on('connection', socket => {
     } else {
       cb({ err: 'Not in room' });
     }
+  });
+
+  on('get_log', (_d, cb) => {
+    const rid = sock2room[socket.id], r = rid && rooms[rid];
+    cb(r ? { ok: true, msgs: r.msgs } : { err: 'Not in room' });
   });
 
   socket.on('disconnect', () => {
