@@ -2,8 +2,34 @@ const express = require('express');
 const http    = require('http');
 const { Server } = require('socket.io');
 const { v4: uuidv4 } = require('uuid');
+const { randomInt, randomUUID, randomBytes } = require('crypto');
 const { Hand } = require('pokersolver');
 const path = require('path');
+
+process.on('uncaughtException',  e => console.error('[uncaughtException]', e));
+process.on('unhandledRejection', e => console.error('[unhandledRejection]', e));
+
+const isFn  = f => typeof f === 'function';
+const isStr = (v, max = 64) => typeof v === 'string' && v.length > 0 && v.length <= max;
+
+function makeLimiter(limit = 30, windowMs = 5000) {
+  let n = 0, t = Date.now();
+  return () => { const now = Date.now(); if (now - t > windowMs) { t = now; n = 0; } return ++n <= limit; };
+}
+
+/** Ack always valid, payload always object, rate-limited and try/catch protected */
+function safeOn(socket, allow, event, handler) {
+  socket.on(event, (...args) => {
+    const cb = isFn(args[args.length - 1]) ? args.pop() : () => {};
+    const d  = args[0] && typeof args[0] === 'object' && !Array.isArray(args[0]) ? args[0] : {};
+    if (!allow()) return cb({ err: 'Too many requests' });
+    try { handler(d, cb); }
+    catch (e) { console.error(`[${event}]`, e); cb({ err: 'Server error' }); }
+  });
+}
+
+/** Protect timers against unhandled throws */
+const guard = fn => (...a) => { try { return fn(...a); } catch (e) { console.error('[timer]', e); } };
 
 const app    = express();
 const server = http.createServer(app);
@@ -20,8 +46,8 @@ const TURN_SEC        = 30;
 const RUNOUT_DELAY_MS = process.env.NODE_ENV === 'test' ? 20 : 1800;
 
 /* ── STATE ─────────────────────────────────────── */
-const rooms     = {};
-const sock2room = {};
+const rooms     = Object.create(null);
+const sock2room = Object.create(null);
 
 /* ── DECK ──────────────────────────────────────── */
 function mkDeck() {
@@ -239,7 +265,7 @@ function startTurnTimer(r) {
   if (!cur || cur.folded || cur.allIn || !cur.active || !cur.connected) return;
 
   r.turnStartMs = Date.now();
-  r.turnTimer = setTimeout(() => {
+  r.turnTimer = setTimeout(guard(() => {
     if (!r.phase || r.phase === 'showdown') return;
     if (r.paused) return;
     const c = r.players[r.curIdx];
@@ -264,7 +290,7 @@ function startTurnTimer(r) {
     if (bettingDone(r)) advanceStreet(r);
     else advancePlayer(r);
     broadcast(r);
-  }, TURN_SEC * 1000);
+  }), TURN_SEC * 1000);
 }
 
 function clearTurnTimer(r) {
@@ -420,20 +446,20 @@ function startRunout(r) {
 
   // If river is already dealt (5 cards), brief pause then showdown
   if (r.board.length >= 5) {
-    r.runoutTimer = setTimeout(() => {
+    r.runoutTimer = setTimeout(guard(() => {
       r.runoutTimer = null;
       r.phase = 'showdown';
       broadcast(r);
       doShowdown(r);
-    }, RUNOUT_DELAY_MS);
+    }), RUNOUT_DELAY_MS);
     return;
   }
 
   // Otherwise, deal the next street after delay
-  r.runoutTimer = setTimeout(() => {
+  r.runoutTimer = setTimeout(guard(() => {
     r.runoutTimer = null;
     stepRunout(r);
-  }, RUNOUT_DELAY_MS);
+  }), RUNOUT_DELAY_MS);
 }
 
 function stepRunout(r) {
@@ -453,10 +479,10 @@ function stepRunout(r) {
     r.phase = 'flop';
     msg(r, `🌊 FLOP: [ ${fmtCards(r.board)} ] — Pot: $${r.pot}`);
     broadcast(r);
-    r.runoutTimer = setTimeout(() => {
+    r.runoutTimer = setTimeout(guard(() => {
       r.runoutTimer = null;
       stepRunout(r);
-    }, RUNOUT_DELAY_MS);
+    }), RUNOUT_DELAY_MS);
     return;
   }
 
@@ -467,10 +493,10 @@ function stepRunout(r) {
     r.phase = 'turn';
     msg(r, `↩️ TURN: [ ${fmtCard(turnCard)} ] — Board: [ ${fmtCards(r.board)} ] — Pot: $${r.pot}`);
     broadcast(r);
-    r.runoutTimer = setTimeout(() => {
+    r.runoutTimer = setTimeout(guard(() => {
       r.runoutTimer = null;
       stepRunout(r);
-    }, RUNOUT_DELAY_MS);
+    }), RUNOUT_DELAY_MS);
     return;
   }
 
@@ -481,10 +507,10 @@ function stepRunout(r) {
     r.phase = 'river';
     msg(r, `🏞️ RIVER: [ ${fmtCard(riverCard)} ] — Board: [ ${fmtCards(r.board)} ] — Pot: $${r.pot}`);
     broadcast(r);
-    r.runoutTimer = setTimeout(() => {
+    r.runoutTimer = setTimeout(guard(() => {
       r.runoutTimer = null;
       stepRunout(r);
-    }, RUNOUT_DELAY_MS);
+    }), RUNOUT_DELAY_MS);
     return;
   }
 
@@ -681,12 +707,12 @@ function awardPot(r, contenders, ev) {
 
 function scheduleNextHand(r) {
   if (r.nextHandTimer) { clearTimeout(r.nextHandTimer); r.nextHandTimer = null; }
-  r.nextHandTimer = setTimeout(() => {
+  r.nextHandTimer = setTimeout(guard(() => {
     r.nextHandTimer = null;
     if (rooms[r.id]?.status === 'playing' && !rooms[r.id]?.paused) {
       startHand(r);
     }
-  }, 6000);
+  }), 6000);
 }
 
 /* ── GAME FLOW ───────────────────────────────────── */
@@ -969,11 +995,11 @@ function handleDisconnect(sid) {
   // If ALL players disconnected, start room destroy timer (60s)
   if (!r.players.some(pl => pl.connected)) {
     if (r.roomDestroyTimer) clearTimeout(r.roomDestroyTimer);
-    r.roomDestroyTimer = setTimeout(() => {
+    r.roomDestroyTimer = setTimeout(guard(() => {
       if (rooms[r.id] && !rooms[r.id].players.some(pl => pl.connected)) {
         destroyRoom(r.id);
       }
-    }, 60000);
+    }), 60000);
   }
 
   // If in an active hand
@@ -1005,7 +1031,7 @@ function handleDisconnect(sid) {
     } else {
       // Mobile app-switch grace period: silent waiting without spamming reconnect log
       if (p.disconnectTimer) clearTimeout(p.disconnectTimer);
-      p.disconnectTimer = setTimeout(() => {
+      p.disconnectTimer = setTimeout(guard(() => {
         p.disconnectTimer = null;
         if (!p.connected && r.status === 'playing' && r.phase && r.phase !== 'showdown' && !p.folded) {
           msg(r, `⏱️ ${p.name} disconnected too long — auto folded`);
@@ -1031,7 +1057,7 @@ function handleDisconnect(sid) {
             broadcast(r);
           }
         }
-      }, graceMs);
+      }), graceMs);
       broadcast(r);
     }
   } else {
@@ -1043,12 +1069,15 @@ function handleDisconnect(sid) {
 /* ── SOCKET.IO ──────────────────────────────────── */
 io.on('connection', socket => {
   console.log(`[+] ${socket.id}`);
+  const allow = makeLimiter();
+  const on = (ev, fn) => safeOn(socket, allow, ev, fn);
 
-  socket.on('create_room', (d, cb) => {
+  on('create_room', (d, cb) => {
     const cleanName = sanitizeName(d.name);
     if (!cleanName) return cb({ err: 'Name required (1-16 characters)' });
     const id  = createRoom(socket.id, { chips: d.chips, sb: d.sb, bb: d.bb, ante: d.ante, maxP: d.maxP });
-    const res = addOrReconnectPlayer(id, socket.id, cleanName, d.token, d.isMobile);
+    const token = isStr(d.token, 64) ? d.token : null;
+    const res = addOrReconnectPlayer(id, socket.id, cleanName, token, d.isMobile === true);
     if (res.err) return cb({ err: res.err });
     socket.join(id);
     msg(rooms[id], `👑 ${cleanName} created the room`);
@@ -1056,12 +1085,14 @@ io.on('connection', socket => {
     cb({ ok: true, id, token: res.player.token });
   });
 
-  socket.on('join_room', (d, cb) => {
+  on('join_room', (d, cb) => {
     const cleanName = sanitizeName(d.name);
     if (!cleanName) return cb({ err: 'Name required (1-16 characters)' });
-    const id = d.id?.toUpperCase();
+    if (!isStr(d.id, 12)) return cb({ err: 'Room not found' });
+    const id = d.id.toUpperCase();
     if (!rooms[id]) return cb({ err: 'Room not found' });
-    const res = addOrReconnectPlayer(id, socket.id, cleanName, d.token, d.isMobile);
+    const token = isStr(d.token, 64) ? d.token : null;
+    const res = addOrReconnectPlayer(id, socket.id, cleanName, token, d.isMobile === true);
     if (res.err) return cb({ err: res.err });
     socket.join(id);
     if (!res.reconnected) {
@@ -1071,7 +1102,7 @@ io.on('connection', socket => {
     cb({ ok: true, id, token: res.player.token, reconnected: res.reconnected });
   });
 
-  socket.on('start_game', cb => {
+  on('start_game', (_d, cb) => {
     const rid = sock2room[socket.id], r = rid && rooms[rid];
     if (!r) return cb({ err: 'Not in a room' });
     if (r.hostId !== socket.id) return cb({ err: 'Host only' });
@@ -1080,7 +1111,7 @@ io.on('connection', socket => {
     cb({ ok: true });
   });
 
-  socket.on('action', (d, cb) => {
+  on('action', (d, cb) => {
     const rid = sock2room[socket.id], r = rid && rooms[rid];
     if (!r) return cb({ err: 'Not in a room' });
     const err = doAction(r, socket.id, d.action, d.amount);
@@ -1088,7 +1119,7 @@ io.on('connection', socket => {
     cb({ ok: true });
   });
 
-  socket.on('settings', (d, cb) => {
+  on('settings', (d, cb) => {
     const rid = sock2room[socket.id], r = rid && rooms[rid];
     if (!r) return cb({ err: 'Not in room' });
     if (r.hostId !== socket.id) return cb({ err: 'Host only' });
@@ -1101,7 +1132,7 @@ io.on('connection', socket => {
     cb({ ok: true });
   });
 
-  socket.on('rebuy', cb => {
+  on('rebuy', (_d, cb) => {
     const rid = sock2room[socket.id], r = rid && rooms[rid];
     if (!r) return cb({ err: 'Not in room' });
     const p = r.players.find(p => p.sid === socket.id);
@@ -1122,7 +1153,7 @@ io.on('connection', socket => {
     cb({ ok: true });
   });
 
-  socket.on('pause_game', cb => {
+  on('pause_game', (_d, cb) => {
     const rid = sock2room[socket.id], r = rid && rooms[rid];
     if (!r) return cb({ err: 'Not in room' });
     if (r.hostId !== socket.id) return cb({ err: 'Host only' });
@@ -1144,22 +1175,24 @@ io.on('connection', socket => {
     cb({ ok: true, paused: r.paused });
   });
 
-  socket.on('chat', d => {
+  on('chat', (d, _cb) => {
     const rid = sock2room[socket.id], r = rid && rooms[rid];
     if (!r) return;
     const p = r.players.find(p => p.sid === socket.id);
-    if (!p || !d.text?.trim()) return;
-    msg(r, `💬 ${p.name}: ${d.text.trim().slice(0,200)}`);
+    if (!p || !isStr(d.text, 500)) return;
+    const text = d.text.trim().slice(0, 200);
+    if (!text) return;
+    msg(r, `💬 ${p.name}: ${text}`);
     broadcast(r);
   });
 
-  socket.on('sync_state', cb => {
+  on('sync_state', (_d, cb) => {
     const rid = sock2room[socket.id], r = rid && rooms[rid];
     if (r) {
       socket.emit('state', filterState(r, socket.id));
-      if (cb) cb({ ok: true });
+      cb({ ok: true });
     } else {
-      if (cb) cb({ err: 'Not in room' });
+      cb({ err: 'Not in room' });
     }
   });
 
