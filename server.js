@@ -112,15 +112,8 @@ function addOrReconnectPlayer(rid, sid, name, token, isMobile = false) {
   const r = rooms[rid];
   if (!r) return { err: 'Room not found' };
 
-  // Try to find existing player for reconnection (by token or disconnected name)
-  let existing = null;
-  if (token) {
-    existing = r.players.find(p => p.token === token);
-  }
-  if (!existing && name) {
-    existing = r.players.find(p => p.name === name && !p.connected);
-  }
-
+  // 1) Reconnect ONLY via secret token — never via public name
+  const existing = isStr(token, 64) ? r.players.find(p => p.token === token) : null;
   if (existing) {
     if (existing.disconnectTimer) {
       clearTimeout(existing.disconnectTimer);
@@ -136,26 +129,26 @@ function addOrReconnectPlayer(rid, sid, name, token, isMobile = false) {
     }
     existing.sid = sid;
     existing.connected = true;
-    if (isMobile !== undefined) existing.isMobile = !!isMobile;
+    existing.isMobile = !!isMobile;
     sock2room[sid] = rid;
-    if (r.hostId === oldSid || !r.players.some(p => p.sid === r.hostId && p.connected)) {
-      r.hostId = sid;
+    if (r.hostId === oldSid) {
+      r.hostId = sid; // Do not steal host if someone else currently holds it
     }
     return { err: null, player: existing, reconnected: true };
   }
 
-  // New player joining
-  if (r.players.some(p => p.connected && p.name === name)) {
+  // 2) New player: unique name (case-insensitive)
+  const key = name.toLowerCase();
+  if (r.players.some(p => !p.left && p.name.toLowerCase() === key)) {
     return { err: 'Name taken' };
   }
-  if (r.players.length >= r.cfg.maxP) {
+  if (r.players.filter(p => !p.left).length >= r.cfg.maxP) {
     return { err: `Room full (${r.cfg.maxP} max)` };
   }
 
   const isPlaying = r.status === 'playing';
-  const playerToken = uuidv4();
   const player = {
-    sid, token: playerToken, name,
+    sid, token: randomUUID(), name,
     chips: r.cfg.chips,
     hole: [], bet: 0, totalBet: 0,
     folded: false, allIn: false,
