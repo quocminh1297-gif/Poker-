@@ -265,17 +265,30 @@ function renderWait(st) {
     const avCls = getAvatarClass(p.name);
     li.innerHTML = `<div class="w-av ${avCls}">${initial}</div>
       <span>${safeName}${p.isMe?' <em style="color:var(--txt3)">(you)</em>':''}</span>
-      ${p.sid===st.hostId?'<span>👑</span>':''}
+      ${p.isHost?'<span>👑</span>':''}
       ${p.wins?`<span style="margin-left:auto;color:var(--gold);font-size:.68rem">🏆×${p.wins}</span>`:''}`;
     ul.appendChild(li);
   });
   document.getElementById('w-count').textContent = st.players.length;
 }
-function copyCode() {
-  navigator.clipboard.writeText(roomId||'').then(() => {
-    const b = document.querySelector('.w-copy');
-    b.textContent='✅ Copied!'; setTimeout(()=>b.textContent='📋 Copy',1500);
-  });
+async function copyCode() {
+  const b = document.querySelector('.w-copy');
+  const code = roomId || document.getElementById('w-code')?.textContent || '';
+  try {
+    if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error('no clipboard');
+    await navigator.clipboard.writeText(code);
+  } catch {
+    const t = document.createElement('textarea');
+    t.value = code;
+    document.body.appendChild(t);
+    t.select();
+    document.execCommand('copy');
+    t.remove();
+  }
+  if (b) {
+    b.textContent = '✅ Copied!';
+    setTimeout(() => { if (b) b.textContent = '📋 Copy'; }, 1500);
+  }
 }
 function saveCfg() {
   socket.emit('settings', {
