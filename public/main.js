@@ -1140,34 +1140,20 @@ function hideWin() {
 }
 
 /* ─── HELPERS ─── */
-function hsClass(d) {
-  if (!d) return '';
-  const l=d.toLowerCase();
-  if (l.includes('royal'))          return 'hs-royal';
-  if (l.includes('straight flush')) return 'hs-sf';
-  if (l.includes('four'))           return 'hs-quads';
-  if (l.includes('full'))           return 'hs-fh';
-  if (l.includes('flush'))          return 'hs-flush';
-  if (l.includes('straight'))       return 'hs-str';
-  if (l.includes('three'))          return 'hs-trips';
-  if (l.includes('two pair'))       return 'hs-2p';
-  if (l.includes('pair'))           return 'hs-pair';
-  return 'hs-hc';
-}
-function hsIcon(d) {
-  if (!d) return '';
-  const l=d.toLowerCase();
-  if (l.includes('royal'))          return '👑';
-  if (l.includes('straight flush')) return '🔥';
-  if (l.includes('four'))           return '🎯';
-  if (l.includes('full'))           return '🏠';
-  if (l.includes('flush'))          return '♠️';
-  if (l.includes('straight'))       return '📏';
-  if (l.includes('three'))          return '3️⃣';
-  if (l.includes('two pair'))       return '✌️';
-  if (l.includes('pair'))           return '👥';
-  return '🃏';
-}
+const HS_RULES = [
+  [/^royal flush/i,    'hs-royal', '👑'],
+  [/^straight flush/i, 'hs-sf',    '🔥'],
+  [/^four of a kind/i, 'hs-quads', '🎯'],
+  [/^full house/i,     'hs-fh',    '🏠'],
+  [/^flush/i,          'hs-flush', '♠️'],
+  [/^straight/i,       'hs-str',   '📏'],
+  [/^three of a kind/i,'hs-trips', '3️⃣'],
+  [/^two pair/i,       'hs-2p',    '✌️'],
+  [/^pair/i,           'hs-pair',  '👥'],
+];
+const hsMeta  = d => { const m = HS_RULES.find(([re]) => re.test(d || '')); return m ? { cls: m[1], icon: m[2] } : { cls: 'hs-hc', icon: '🃏' }; };
+function hsClass(d) { return hsMeta(d).cls; }
+function hsIcon(d) { return hsMeta(d).icon; }
 function fmt(n) {
   if (n==null) return '0';
   if (n>=1000000) return (n/1000000).toFixed(1)+'M';
