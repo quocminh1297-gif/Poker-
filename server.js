@@ -122,6 +122,18 @@ function handStrength(hole, board) {
   try { return Hand.solve([...hole, ...board]).descr; } catch { return null; }
 }
 
+const hsCache = new Map();
+function handStrengthCached(hole, board) {
+  const k = (hole ? hole.join() : '') + '|' + (board ? board.join() : '');
+  let v = hsCache.get(k);
+  if (v === undefined) {
+    v = handStrength(hole, board);
+    if (hsCache.size > 500) hsCache.clear();
+    hsCache.set(k, v);
+  }
+  return v;
+}
+
 function newRoomId() {
   let id;
   do { id = randomBytes(3).toString('hex').toUpperCase(); } while (rooms[id]);
@@ -209,7 +221,7 @@ function filterState(room, sid) {
   const me = room.players.find(p => p.sid === sid);
   let hs = null;
   if (me && me.hole.length === 2 && !me.folded && room.phase && room.phase !== 'showdown') {
-    hs = handStrength(me.hole, room.board);
+    hs = handStrengthCached(me.hole, room.board);
   }
 
   const players = room.players.map(p => {
@@ -1343,5 +1355,8 @@ module.exports = {
   DISCONNECT_GRACE_MS,
   mkDeck,
   handleDisconnect,
+  handStrength,
+  handStrengthCached,
+  hsCache,
 };
 
