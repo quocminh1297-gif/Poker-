@@ -38,6 +38,7 @@ const {
   doAction,
   awardPot,
   refundUncalledBet,
+  startTurnTimer,
   clearTurnTimer,
   clearRunoutTimer,
   inHandP,
@@ -248,6 +249,7 @@ io.on('connection', socket => {
     }
 
     p.chips = r.cfg.chips;
+    p.rebuys = (p.rebuys || 0) + 1;
     p.waitingNextHand = (r.status === 'playing');
     p.active = (r.status !== 'playing');
     msg(r, `💵 ${p.name} rebuys $${r.cfg.chips}${p.waitingNextHand ? ' (enters next hand)' : ''}`);
@@ -328,6 +330,7 @@ module.exports = {
   doAction,
   awardPot,
   refundUncalledBet,
+  startTurnTimer,
   clearTurnTimer,
   clearRunoutTimer,
   inHandP,

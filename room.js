@@ -144,7 +144,7 @@ function addOrReconnectPlayer(rid, sid, name, token, isMobile = false) {
     connected: true,
     isMobile: !!isMobile,
     waitingNextHand: isPlaying,
-    acted: false, canRaise: true, wins: 0, lastAct: null, graceUsed: false,
+    acted: false, canRaise: true, wins: 0, rebuys: 0, lastAct: null, graceUsed: false,
     left: false,
   };
   r.players.push(player);
@@ -182,6 +182,7 @@ function filterState(room, sid) {
       waitingNextHand: p.waitingNextHand,
       isMe,
       wins: p.wins || 0,
+      rebuys: p.rebuys || 0,
     };
   });
 
@@ -388,7 +389,7 @@ function awardPot(r, contenders, ev) {
   if (!contenders || contenders.length === 0) {
     for (const p of r.players) { p.chips += p.totalBet; p.totalBet = 0; p.bet = 0; }
     r.pot = 0; r.phase = 'showdown'; r.showdownHands = false;
-    r.result = { winners: [], allHands: null, totalPot: 0 };
+    r.result = { winners: [], allHands: null, totalPot: 0, win5: [] };
     msg(r, '⚠️ Không còn người chơi hợp lệ — hoàn lại tiền cược');
     broadcast(r); scheduleNextHand(r);
     return;
@@ -403,9 +404,10 @@ function awardPot(r, contenders, ev) {
     winner.wins = (winner.wins || 0) + 1;
 
     r.result = {
-      winners: [{ name: winner.name, amt: total, hd: null, hole: null }],
+      winners: [{ pid: winner.pid, name: winner.name, amt: total, hd: null, hole: null }],
       allHands: null,
       totalPot: total,
+      win5: [],
     };
     r.pot = 0;
     r.phase = 'showdown';
@@ -477,24 +479,32 @@ function awardPot(r, contenders, ev) {
   }
 
   const wr = [];
+  const win5Set = new Set();
   for (const [p, amt] of winningsMap.entries()) {
     if (amt > 0) {
       p.chips += amt;
       p.wins = (p.wins || 0) + 1;
-      const hd = ev?.find(e => e.player === p)?.hand.descr || null;
-      wr.push({ name: p.name, amt, hd, hole: p.hole });
+      const e = ev?.find(entry => entry.player === p);
+      const hd = e?.hand?.descr || null;
+      wr.push({ pid: p.pid, name: p.name, amt, hd, hole: p.hole });
       msg(r, `🏆 ${p.name} wins $${amt}${hd ? ` with ${hd}` : ''} [ ${fmtCards(p.hole)} ]`);
+      if (e && e.hand && e.hand.cards) {
+        for (const c of e.hand.cards) {
+          win5Set.add(c.value + c.suit);
+        }
+      }
     }
   }
 
   const ah = ev ? ev.map(e => ({
+    pid: e.player.pid,
     name: e.player.name,
     hd: e.hand.descr,
     hole: e.player.hole,
     won: (winningsMap.get(e.player) || 0) > 0,
   })) : [];
 
-  r.result = { winners: wr, allHands: ah, totalPot: total };
+  r.result = { winners: wr, allHands: ah, totalPot: total, win5: Array.from(win5Set) };
   r.pot = 0;
   r.phase = 'showdown';
   broadcast(r);
