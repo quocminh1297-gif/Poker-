@@ -6,7 +6,7 @@
   <title>Texas Hold'em Poker</title>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=Cinzel:wght@700;800;900&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Mulish:ital,wght@0,400..900;1,400..900&family=Cinzel:wght@700;800;900&display=swap" rel="stylesheet"/>
   <link rel="stylesheet" href="style.css"/>
 </head>
 <body>
@@ -14,23 +14,9 @@
 <!-- ═══ NETWORK NOTIFICATION TOAST ═══ -->
 <div id="net-toast" class="net-toast hidden"></div>
 
-<!-- ═══ WINNER OVERLAY ═══ -->
-<div id="winner-overlay" class="overlay hidden">
-  <div class="confetti-box" id="confetti-box"></div>
-  <div class="win-modal">
-    <div class="win-trophy">🏆</div>
-    <div class="win-label">WINNER</div>
-    <div class="win-names" id="win-names"></div>
-    <div class="win-hand"  id="win-hand"></div>
-    <div class="win-pot"   id="win-pot"></div>
-    <div class="win-sep"></div>
-    <div class="win-grid"  id="win-grid"></div>
-    <div class="win-cd">Next hand in <span id="cd-num">6</span>s</div>
-  </div>
-</div>
 
 <!-- ═══ LOG OVERLAY ═══ -->
-<div id="log-overlay" class="log-overlay hidden" onclick="if(event.target===this)toggleLog()">
+<div id="log-overlay" class="log-overlay hidden">
   <div class="log-panel">
     <div class="log-hdr">
       <div class="log-hdr-left">
@@ -38,8 +24,8 @@
         <span class="log-count" id="log-count">0 items</span>
       </div>
       <div class="log-hdr-right">
-        <input type="text" id="log-filter-inp" class="log-search-inp" placeholder="Search logs..." oninput="onLogFilter(this.value)"/>
-        <button class="log-close-btn" onclick="toggleLog()" title="Close">✕</button>
+        <input type="text" id="log-filter-inp" class="log-search-inp" placeholder="Search logs..."/>
+        <button class="log-close-btn" data-click="toggleLog" title="Close">✕</button>
       </div>
     </div>
     <div class="log-body" id="log-body"></div>
@@ -57,12 +43,12 @@
     </div>
     <div class="lobby-card">
       <div class="tabs">
-        <button class="tab active" id="tab-c" onclick="switchTab('c')">Create Room</button>
-        <button class="tab"        id="tab-j" onclick="switchTab('j')">Join Room</button>
+        <button class="tab active" id="tab-c" data-click="switchTab-c">Create Room</button>
+        <button class="tab"        id="tab-j" data-click="switchTab-j">Join Room</button>
       </div>
       <!-- CREATE -->
       <div id="pan-c" class="pan active">
-        <div class="fg"><label>Your Name</label><input type="text" id="c-name" placeholder="Enter name…" maxlength="20" autocomplete="off"/></div>
+        <div class="fg"><label>Your Name</label><input type="text" id="c-name" placeholder="Enter name…" maxlength="16" autocomplete="off"/></div>
         <div class="cfg-box">
           <div class="cfg-title">⚙ Room Settings</div>
           <div class="cfg-row3">
@@ -75,13 +61,13 @@
             <div class="cfg-item"><label>Max Players</label><input type="number" id="c-max" value="9" min="2" max="9"/></div>
           </div>
         </div>
-        <button class="btn-go" onclick="createRoom()">🎲 Create Room</button>
+        <button class="btn-go" data-click="createRoom">🎲 Create Room</button>
       </div>
       <!-- JOIN -->
       <div id="pan-j" class="pan">
-        <div class="fg"><label>Your Name</label><input type="text" id="j-name" placeholder="Enter name…" maxlength="20" autocomplete="off"/></div>
+        <div class="fg"><label>Your Name</label><input type="text" id="j-name" placeholder="Enter name…" maxlength="16" autocomplete="off"/></div>
         <div class="fg"><label>Room Code</label><input type="text" id="j-code" placeholder="ABC123" maxlength="6" autocomplete="off" class="code-input"/></div>
-        <button class="btn-go" onclick="joinRoom()">🚪 Join Room</button>
+        <button class="btn-go" data-click="joinRoom">🚪 Join Room</button>
       </div>
       <div id="lobby-err" class="err"></div>
     </div>
@@ -98,7 +84,7 @@
       </div>
       <div class="w-code-block">
         <div class="w-code" id="w-code">——</div>
-        <button class="w-copy" onclick="copyCode()">📋 Copy</button>
+        <button class="w-copy" data-click="copyCode">📋 Copy</button>
       </div>
     </div>
     <div class="w-body">
@@ -117,12 +103,12 @@
           <div class="cfg-item"><label>Ante <span class="note">(0=off)</span></label><input type="number" id="w-ante" min="0" step="500"/></div>
           <div class="cfg-item"><label>Max Players</label><input type="number" id="w-max" min="2" max="9"/></div>
         </div>
-        <button class="btn-sec" onclick="saveCfg()">💾 Save Settings</button>
+        <button class="btn-sec" data-click="saveCfg">💾 Save Settings</button>
       </div>
     </div>
     <div class="w-footer">
-      <button class="btn-sec btn-leave-w" onclick="leaveRoom()">🚪 Leave</button>
-      <button class="btn-go" id="btn-start" onclick="startGame()">🃏 Start Game</button>
+      <button class="btn-sec btn-leave-w" data-click="leaveRoom">🚪 Leave</button>
+      <button class="btn-go" id="btn-start" data-click="startGame">🃏 Start Game</button>
       <div id="w-err" class="err"></div>
     </div>
   </div>
@@ -142,10 +128,10 @@
       <div class="pot-display">POT <span id="pot-val">$0</span></div>
     </div>
     <div class="tb-r">
-      <button class="tb-btn" id="tb-pause" onclick="togglePause()" style="display:none">⏸ PAUSE</button>
-      <button class="tb-btn" onclick="toggleLog()">📋 LOG</button>
-      <button class="tb-btn" id="tb-chat-btn" onclick="toggleChat()">💬</button>
-      <button class="tb-btn tb-leave" onclick="confirmLeaveRoom()" title="Leave Room">🚪</button>
+      <button class="tb-btn" id="tb-pause" data-click="togglePause" style="display:none">⏸ PAUSE</button>
+      <button class="tb-btn" data-click="toggleLog">📋 LOG</button>
+      <button class="tb-btn" id="tb-chat-btn" data-click="toggleChat">💬</button>
+      <button class="tb-btn tb-leave" data-click="confirmLeaveRoom" title="Leave Room">🚪</button>
     </div>
   </header>
 
@@ -155,12 +141,19 @@
     <div class="felt" id="felt">
       <div class="felt-inner">
         <div class="pot-on-felt" id="pot-on-felt"></div>
+        <div class="next-hand-lbl hidden" id="next-hand-lbl"></div>
         <div class="board" id="board"></div>
       </div>
+      <div class="felt-watermark">
+        <div class="wm-title">NO LIMIT TEXAS HOLD'EM</div>
+        <div class="wm-blinds" id="wm-blinds"></div>
+      </div>
     </div>
+    <!-- Bets & dealer layer on felt (desktop) -->
+    <div id="bets" style="position:absolute;inset:0;pointer-events:none;"></div>
     <!-- Opponent seats injected by JS -->
     <div id="seats" style="position:absolute;inset:0;pointer-events:none;"></div>
-    <!-- Hero seat for mobile (hidden on desktop via CSS) -->
+    <!-- Hero seat in arena (desktop & mobile) -->
     <div id="my-seat" class="seat hero-seat"></div>
     <!-- Pause overlay -->
     <div class="pause-overlay hidden" id="pause-overlay">
@@ -172,24 +165,6 @@
 
   <!-- ═══ BOTTOM BAR ═══ (PokerNow style) -->
   <div class="bottom-bar" id="bottom-bar">
-
-    <!-- My cards + info (left section) -->
-    <div class="my-zone" id="my-zone">
-      <div class="my-cards" id="my-cards"></div>
-      <div class="my-meta">
-        <div class="my-name-row" id="my-name-row"></div>
-        <div class="my-hs"       id="my-hs"></div>
-        <button id="btn-rebuy" class="tb-btn rebuy-btn" style="display:none;" onclick="triggerRebuy()">
-          🔄 Rebuy Chips
-        </button>
-      </div>
-    </div>
-
-    <!-- Timer bar — positioned near bottom-right of my cards via CSS -->
-    <div class="timer-wrap" id="timer-wrap">
-      <div class="timer-bar"><div class="timer-fill" id="timer-fill"></div></div>
-      <span class="timer-num" id="timer-num">30</span>
-    </div>
 
     <!-- Right: Action zone -->
     <div class="act-zone" id="act-zone">
@@ -205,38 +180,42 @@
         <!-- Left: Your bet editable input -->
         <div class="rp-bet-box">
           <div class="rp-bet-label">Your bet</div>
-          <input type="number" id="r-input" class="rp-bet-input" oninput="syncSlider()" placeholder="0"/>
-          <div class="rp-bet-bb" id="rp-bet-bb">0BB</div>
+          <div class="rp-bet-inner">
+            <input type="number" id="r-input" class="rp-bet-input" placeholder="0"/>
+            <div class="rp-bet-bb" id="rp-bet-bb">0BB</div>
+          </div>
         </div>
-        <!-- Presets — horizontal row like PokerNow -->
-        <div class="rp-presets">
-          <button onclick="preset('min')">MIN RAISE</button>
-          <button onclick="preset(0.5)">1/2 POT</button>
-          <button onclick="preset(0.75)">3/4 POT</button>
-          <button onclick="preset(1)">POT</button>
-          <button onclick="preset('max')">ALL IN</button>
+        <!-- Middle: presets on top, slider below -->
+        <div class="rp-mid">
+          <div class="rp-presets">
+            <button data-click="preset-min">MIN RAISE</button>
+            <button data-click="preset-0.5">1/2 POT</button>
+            <button data-click="preset-0.75">3/4 POT</button>
+            <button data-click="preset-1">POT</button>
+            <button data-click="preset-max">ALL IN</button>
+          </div>
+          <!-- Slider row -->
+          <div class="rp-slider-row">
+            <button class="rp-adj" data-click="adjustRaise-down">−</button>
+            <input type="range" id="r-slider"/>
+            <button class="rp-adj" data-click="adjustRaise-up">+</button>
+          </div>
         </div>
-        <!-- Slider row -->
-        <div class="rp-slider-row">
-          <button class="rp-adj" onclick="adjustRaise(-1)">−</button>
-          <input type="range" id="r-slider" oninput="syncInput()"/>
-          <button class="rp-adj" onclick="adjustRaise(1)">+</button>
-        </div>
-        <!-- BACK + BET -->
+        <!-- BACK + BET/RAISE -->
         <div class="rp-actions">
-          <button class="rp-back" onclick="closeRaise()">
+          <button class="rp-back" data-click="closeRaise">
             <span class="rp-key">ESC</span>BACK
           </button>
-          <button class="rp-bet-btn" onclick="confirmRaise()">BET</button>
+          <button class="rp-bet-btn" data-click="confirmRaise">BET</button>
         </div>
       </div>
 
       <!-- Normal action row: RAISE | CHECK | CALL | FOLD -->
       <div class="act-row" id="act-row">
-        <button class="btn-a call"  id="b-call"  onclick="act('call')"  data-key="C" style="display:none">CALL</button>
-        <button class="btn-a raise" id="b-raise" onclick="toggleRaise()" data-key="R">RAISE</button>
-        <button class="btn-a check" id="b-check" onclick="act('check')" data-key="K">CHECK</button>
-        <button class="btn-a fold"  id="b-fold"  onclick="act('fold')"  data-key="F">FOLD</button>
+        <button class="btn-a call"  id="b-call"  data-click="act-call"  data-key="C" style="display:none">CALL</button>
+        <button class="btn-a raise" id="b-raise" data-click="toggleRaise" data-key="R">RAISE</button>
+        <button class="btn-a check" id="b-check" data-click="act-check" data-key="K">CHECK</button>
+        <button class="btn-a fold"  id="b-fold"  data-click="act-fold"  data-key="F">FOLD</button>
       </div>
 
       <div class="act-err-row"><span id="act-err" class="err-inline"></span></div>
@@ -249,13 +228,12 @@
     <div class="chat-panel" id="chat-panel">
       <div class="chat-hdr">
         <span>💬 Chat</span>
-        <button onclick="toggleChat()">✕</button>
+        <button data-click="toggleChat">✕</button>
       </div>
       <div class="chat-msgs" id="chat-msgs"></div>
       <div class="chat-inp">
-        <input type="text" id="chat-in" placeholder="Say something…" maxlength="200"
-               onkeydown="if(event.key==='Enter')sendChat()"/>
-        <button onclick="sendChat()">↵</button>
+        <input type="text" id="chat-in" placeholder="Say something…" maxlength="200"/>
+        <button data-click="sendChat">↵</button>
       </div>
     </div>
   </div>
